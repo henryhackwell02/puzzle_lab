@@ -660,203 +660,211 @@ function generateStrandsGrid(allWords) {
 
 function _generateStrandsGridWithCols(allWords, totalLetters, cols) {
   const rows = totalLetters / cols;
-
   const spangram = allWords[0];
-  const otherWords = allWords.slice(1).sort((a, b) => b.length - a.length);
-  const sortedWords = [spangram, ...otherWords];
-
-  const grid = Array.from({ length: rows }, () => Array(cols).fill(null));
-  const owner = Array.from({ length: rows }, () => Array(cols).fill(-1));
-  const placements = {};
+  const otherWords = allWords.slice(1);
   const dirs = [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]];
+  const deadline = Date.now() + 8000; // 8-second time budget
 
-  const isEdge = (r, c) => r === 0 || r === rows - 1 || c === 0 || c === cols - 1;
-  const getEdges = (r, c) => {
-    const e = [];
-    if (r === 0) e.push("top");
-    if (r === rows - 1) e.push("bottom");
-    if (c === 0) e.push("left");
-    if (c === cols - 1) e.push("right");
-    return e;
-  };
-  // Opposite edge pairs: top↔bottom, left↔right
-  const OPPOSITE = { top: "bottom", bottom: "top", left: "right", right: "left" };
-  const onOppositeEdges = (r1, c1, r2, c2) => {
-    const e1 = getEdges(r1, c1);
-    const e2 = getEdges(r2, c2);
-    if (e1.length === 0 || e2.length === 0) return false;
-    for (const a of e1) for (const b of e2) if (OPPOSITE[a] === b) return true;
-    return false;
-  };
-
-  function getNeighbors(r, c) {
+  // Precompute neighbor table (numeric, no string alloc)
+  const neighborTable = new Array(rows * cols);
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
     const n = [];
     for (const [dr, dc] of dirs) {
       const nr = r + dr, nc = c + dc;
-      if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) n.push([nr, nc]);
+      if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) n.push(nr * cols + nc);
     }
-    return n;
+    neighborTable[r * cols + c] = n;
   }
+
+  const isEdge = (r, c) => r === 0 || r === rows - 1 || c === 0 || c === cols - 1;
+  const getEdgeBits = (r, c) => {
+    let b = 0;
+    if (r === 0) b |= 1;           // top
+    if (r === rows - 1) b |= 2;    // bottom
+    if (c === 0) b |= 4;           // left
+    if (c === cols - 1) b |= 8;    // right
+    return b;
+  };
+  // Opposite: top(1)↔bottom(2), left(4)↔right(8)
+  const onOppositeEdges = (r1, c1, r2, c2) => {
+    const b1 = getEdgeBits(r1, c1), b2 = getEdgeBits(r2, c2);
+    if (!b1 || !b2) return false;
+    return ((b1 & 1) && (b2 & 2)) || ((b1 & 2) && (b2 & 1)) || ((b1 & 4) && (b2 & 8)) || ((b1 & 8) && (b2 & 4));
+  };
+
+  // Fast connectivity check using flat numeric arrays
+  const gridFlat = new Int8Array(rows * cols); // 0 = empty, 1 = filled
+  const visited = new Uint8Array(rows * cols);
+  let visitGen = 0;
 
   function emptyConnected() {
-    const empty = [];
-    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) if (grid[r][c] === null) empty.push(`${r},${c}`);
-    if (empty.length <= 1) return true;
-    const set = new Set(empty);
-    const visited = new Set();
-    const queue = [empty[0]];
-    visited.add(empty[0]);
-    while (queue.length) {
-      const [cr, cc] = queue.shift().split(",").map(Number);
-      for (const [nr, nc] of getNeighbors(cr, cc)) {
-        const k = `${nr},${nc}`;
-        if (set.has(k) && !visited.has(k)) { visited.add(k); queue.push(k); }
-      }
+    let firstEmpty = -1, emptyCount = 0;
+    for (let i = 0; i < rows * cols; i++) {
+      if (!gridFlat[i]) { emptyCount++; if (firstEmpty < 0) firstEmpty = i; }
     }
-    return visited.size === set.size;
-  }
-
-  function placeWord(wi, charIdx, path) {
-    if (charIdx === sortedWords[wi].length) {
-      // For spangram (wi===0): verify it spans to the opposite edge
-      if (wi === 0) {
-        const [sr, sc] = path[0];
-        const [er, ec] = path[path.length - 1];
-        if (!isEdge(sr, sc) || !isEdge(er, ec) || !onOppositeEdges(sr, sc, er, ec)) {
-          return false;
+    if (emptyCount <= 1) return true;
+    visitGen++;
+    const queue = [firstEmpty];
+    visited[firstEmpty] = visitGen;
+    let reached = 1;
+    let qi = 0;
+    while (qi < queue.length) {
+      const cur = queue[qi++];
+      for (const nb of neighborTable[cur]) {
+        if (!gridFlat[nb] && visited[nb] !== visitGen) {
+          visited[nb] = visitGen;
+          queue.push(nb);
+          reached++;
         }
       }
-      placements[sortedWords[wi]] = path.map(([r, c]) => [r, c]);
-      return tryNextWord(wi + 1);
+    }
+    return reached === emptyCount;
+  }
+
+  // Grid letter storage
+  const gridLetters = new Array(rows * cols).fill(null);
+
+  function shuffle(arr) {
+    for (let i = arr.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [arr[i], arr[j]] = [arr[j], arr[i]]; }
+    return arr;
+  }
+
+  let placements = {};
+
+  function placeWord(wi, charIdx, path, sortedWords) {
+    if (Date.now() > deadline) return false;
+    const word = sortedWords[wi];
+    if (charIdx === word.length) {
+      if (wi === 0) {
+        const s = path[0], e = path[path.length - 1];
+        const sr = Math.floor(s / cols), sc = s % cols, er = Math.floor(e / cols), ec = e % cols;
+        if (!isEdge(sr, sc) || !isEdge(er, ec) || !onOppositeEdges(sr, sc, er, ec)) return false;
+      }
+      placements[word] = path.map(p => [Math.floor(p / cols), p % cols]);
+      return tryNextWord(wi + 1, sortedWords);
     }
 
-    const letter = sortedWords[wi][charIdx];
+    const letter = word[charIdx];
     let candidates;
 
     if (charIdx === 0) {
       candidates = [];
       if (wi === 0) {
-        // Spangram must start on an edge cell
         for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
-          if (grid[r][c] === null && isEdge(r, c)) candidates.push([r, c]);
+          if (!gridFlat[r * cols + c] && isEdge(r, c)) candidates.push(r * cols + c);
         }
       } else {
-        for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
-          if (grid[r][c] === null) candidates.push([r, c]);
-        }
+        for (let i = 0; i < rows * cols; i++) { if (!gridFlat[i]) candidates.push(i); }
       }
-      for (let i = candidates.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [candidates[i], candidates[j]] = [candidates[j], candidates[i]]; }
+      shuffle(candidates);
     } else {
-      const [pr, pc] = path[path.length - 1];
-      candidates = getNeighbors(pr, pc).filter(([r, c]) => grid[r][c] === null);
-      // Bias spangram toward the opposite edge to help it span
-      if (wi === 0) {
-        const startEdges = getEdges(path[0][0], path[0][1]);
+      const prev = path[path.length - 1];
+      candidates = neighborTable[prev].filter(i => !gridFlat[i]);
+      // Bias spangram toward opposite edge
+      if (wi === 0 && charIdx > word.length * 0.4) {
+        const startCell = path[0];
+        const sr = Math.floor(startCell / cols), sc = startCell % cols;
+        const startBits = getEdgeBits(sr, sc);
+        // Score candidates: prefer cells closer to opposite edge
         candidates.sort((a, b) => {
-          const aEdge = isEdge(a[0], a[1]) ? 1 : 0;
-          const bEdge = isEdge(b[0], b[1]) ? 1 : 0;
-          return bEdge - aEdge;
+          const ar = Math.floor(a / cols), ac = a % cols;
+          const br = Math.floor(b / cols), bc = b % cols;
+          let aScore = 0, bScore = 0;
+          if (startBits & 1) { aScore += ar; bScore += br; } // start top → prefer high row
+          if (startBits & 2) { aScore += (rows - 1 - ar); bScore += (rows - 1 - br); } // start bottom → prefer low row
+          if (startBits & 4) { aScore += ac; bScore += bc; } // start left → prefer high col
+          if (startBits & 8) { aScore += (cols - 1 - ac); bScore += (cols - 1 - bc); } // start right → prefer low col
+          return bScore - aScore;
         });
-        // Shuffle within groups to maintain randomness
-        const edgeCands = candidates.filter(([r, c]) => isEdge(r, c));
-        const innerCands = candidates.filter(([r, c]) => !isEdge(r, c));
-        for (let i = edgeCands.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [edgeCands[i], edgeCands[j]] = [edgeCands[j], edgeCands[i]]; }
-        for (let i = innerCands.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [innerCands[i], innerCands[j]] = [innerCands[j], innerCands[i]]; }
-        candidates = [...innerCands, ...edgeCands]; // inner first so spangram traverses through grid
+        // Shuffle within top half to maintain variety
+        const half = Math.ceil(candidates.length / 2);
+        const top = candidates.slice(0, half);
+        const bot = candidates.slice(half);
+        shuffle(top); shuffle(bot);
+        candidates = [...top, ...bot];
       } else {
-        for (let i = candidates.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [candidates[i], candidates[j]] = [candidates[j], candidates[i]]; }
+        shuffle(candidates);
       }
     }
 
-    for (const [r, c] of candidates) {
-      grid[r][c] = letter;
-      owner[r][c] = wi;
-      path.push([r, c]);
+    for (const idx of candidates) {
+      gridLetters[idx] = letter;
+      gridFlat[idx] = 1;
+      path.push(idx);
 
-      const shouldCheck = charIdx > 0 && (charIdx % 3 === 0 || charIdx === sortedWords[wi].length - 1);
+      const shouldCheck = charIdx > 0 && (charIdx % 4 === 0 || charIdx === word.length - 1);
       if (!shouldCheck || emptyConnected()) {
-        if (placeWord(wi, charIdx + 1, path)) return true;
+        if (placeWord(wi, charIdx + 1, path, sortedWords)) return true;
       }
 
       path.pop();
-      grid[r][c] = null;
-      owner[r][c] = -1;
+      gridLetters[idx] = null;
+      gridFlat[idx] = 0;
     }
     return false;
   }
 
-  function tryNextWord(wi) {
+  function tryNextWord(wi, sortedWords) {
     if (wi >= sortedWords.length) {
-      for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) if (grid[r][c] === null) return false;
+      for (let i = 0; i < rows * cols; i++) if (!gridFlat[i]) return false;
       return true;
     }
-    return placeWord(wi, 0, []);
+    return placeWord(wi, 0, [], sortedWords);
   }
 
-  // Verify each word has exactly one path in the grid (no alternate solutions)
+  // Verify each word has exactly one path in the grid
   function hasUniquePlacements(finalPlacements) {
     for (const word of allWords) {
-      const pathCount = countWordPaths(word, finalPlacements[word]);
-      if (pathCount > 1) return false;
+      if (countWordPaths(word) > 1) return false;
     }
     return true;
   }
 
-  // Count how many distinct adjacent paths spell `word` in the grid
-  function countWordPaths(word, intendedPath) {
-    const intendedSet = new Set(intendedPath.map(([r, c]) => `${r},${c}`));
+  function countWordPaths(word) {
     let count = 0;
-    const maxCount = 2; // We only need to know if > 1
+    const vis = new Uint8Array(rows * cols);
 
-    function dfs(ci, path, visited) {
-      if (count >= maxCount) return;
-      if (ci === word.length) {
-        count++;
-        return;
-      }
-      if (ci === 0) {
-        // Try every starting cell
-        for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
-          if (grid[r][c] === word[0]) {
-            visited.add(`${r},${c}`);
-            path.push([r, c]);
-            dfs(1, path, visited);
-            path.pop();
-            visited.delete(`${r},${c}`);
-            if (count >= maxCount) return;
-          }
-        }
-      } else {
-        const [pr, pc] = path[path.length - 1];
-        for (const [dr, dc] of dirs) {
-          const nr = pr + dr, nc = pc + dc;
-          if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) continue;
-          const k = `${nr},${nc}`;
-          if (visited.has(k)) continue;
-          if (grid[nr][nc] !== word[ci]) continue;
-          visited.add(k);
-          path.push([nr, nc]);
-          dfs(ci + 1, path, visited);
-          path.pop();
-          visited.delete(k);
-          if (count >= maxCount) return;
-        }
+    function dfs(ci, lastIdx) {
+      if (count >= 2) return;
+      if (ci === word.length) { count++; return; }
+      const targets = ci === 0
+        ? Array.from({ length: rows * cols }, (_, i) => i).filter(i => gridLetters[i] === word[0])
+        : neighborTable[lastIdx].filter(i => !vis[i] && gridLetters[i] === word[ci]);
+      for (const idx of targets) {
+        vis[idx] = 1;
+        dfs(ci + 1, idx);
+        vis[idx] = 0;
+        if (count >= 2) return;
       }
     }
-
-    dfs(0, [], new Set());
+    dfs(0, -1);
     return count;
   }
 
-  for (let attempt = 0; attempt < 40; attempt++) {
-    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) { grid[r][c] = null; owner[r][c] = -1; }
-    Object.keys(placements).forEach(k => delete placements[k]);
-    if (tryNextWord(0)) {
+  // Main loop: try different word orderings with a time budget
+  let attempt = 0;
+  while (Date.now() < deadline) {
+    attempt++;
+    // Reset grid
+    gridFlat.fill(0);
+    gridLetters.fill(null);
+    placements = {};
+
+    // Vary word ordering: always spangram first, then shuffle others
+    const shuffledOthers = [...otherWords];
+    shuffle(shuffledOthers);
+    // Alternate between longest-first and random ordering
+    const sortedWords = attempt % 3 === 0
+      ? [spangram, ...shuffledOthers]
+      : [spangram, ...shuffledOthers.sort((a, b) => b.length - a.length)];
+
+    if (tryNextWord(0, sortedWords)) {
       const finalPlacements = {};
       for (const w of allWords) finalPlacements[w] = placements[w];
-      // Reject grids where any word can be traced through a different path
       if (hasUniquePlacements(finalPlacements)) {
-        return { grid, rows, cols, placements: finalPlacements };
+        // Convert to 2D grid
+        const grid2D = Array.from({ length: rows }, (_, r) => Array.from({ length: cols }, (_, c) => gridLetters[r * cols + c]));
+        return { grid: grid2D, rows, cols, placements: finalPlacements };
       }
     }
   }
