@@ -1013,7 +1013,7 @@ function CreateStrands({ user, db, onBack, notify, updateUser, editPuzzle }) {
   const [spangramInput, setSpangramInput] = useState(ep?.spangram || "");
   const [shareWith, setShareWith] = useState([]);
   const [generating, setGenerating] = useState(false);
-  const [preview, setPreview] = useState(null);
+  const [preview, setPreview] = useState(ep ? { grid: ep.grid, rows: ep.rows, cols: ep.cols, placements: ep.placements, spangram: ep.spangram, words: ep.words, allWords: [ep.spangram, ...ep.words] } : null);
 
   const generate = () => {
     const spangram = spangramInput.trim().toUpperCase();
