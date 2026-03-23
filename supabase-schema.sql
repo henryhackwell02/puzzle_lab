@@ -98,11 +98,12 @@ CREATE POLICY "Users can share puzzles" ON shared_puzzles FOR INSERT WITH CHECK 
 CREATE POLICY "Users can see own friend requests" ON friend_requests FOR SELECT USING (auth.uid() = to_user_id OR auth.uid() = from_user_id);
 CREATE POLICY "Users can send friend requests" ON friend_requests FOR INSERT WITH CHECK (auth.uid() = from_user_id);
 CREATE POLICY "Users can update requests sent to them" ON friend_requests FOR UPDATE USING (auth.uid() = to_user_id);
+CREATE POLICY "Users can delete own sent requests" ON friend_requests FOR DELETE USING (auth.uid() = from_user_id);
 
--- Friendships: users can see own
-CREATE POLICY "Users can see own friendships" ON friendships FOR SELECT USING (auth.uid() = user_id);
+-- Friendships: users can see/manage where they appear as user_id or friend_id
+CREATE POLICY "Users can see own friendships" ON friendships FOR SELECT USING (auth.uid() = user_id OR auth.uid() = friend_id);
 CREATE POLICY "Authenticated users can create friendships" ON friendships FOR INSERT WITH CHECK (auth.uid() = user_id OR auth.uid() = friend_id);
-CREATE POLICY "Users can delete own friendships" ON friendships FOR DELETE USING (auth.uid() = user_id);
+CREATE POLICY "Users can delete own friendships" ON friendships FOR DELETE USING (auth.uid() = user_id OR auth.uid() = friend_id);
 
 -- Results: users can see all (for leaderboard), manage own
 CREATE POLICY "Results are viewable by everyone" ON results FOR SELECT USING (true);

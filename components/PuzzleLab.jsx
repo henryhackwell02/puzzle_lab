@@ -1780,13 +1780,13 @@ function Friends({ user, db, onBack, updateUser, notify, supaUser, reloadUser })
   const sendRequest = async (profile) => {
     if (!SB || !supaUser) return;
     setBusy(true);
-    const ok = await sbSendFriendRequest(supaUser.id, profile.id);
-    if (ok) {
+    const result = await sbSendFriendRequest(supaUser.id, profile.id);
+    if (result.ok) {
       notify(`Request sent to ${profile.display_name || profile.email}!`, "success");
       setSearchResults(prev => prev.filter(r => r.id !== profile.id));
       setFi("");
     } else {
-      notify("Failed to send request", "error");
+      notify(result.error || "Failed to send request", "error");
     }
     setBusy(false);
   };
