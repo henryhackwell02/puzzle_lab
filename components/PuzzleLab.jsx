@@ -320,12 +320,12 @@ function Home({ user, db, nav, logout, notify, updateUser }) {
 
   return (
     <div style={{ maxWidth: 680, margin: "0 auto", padding: "24px 20px", animation: "fadeUp .4s ease" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 32 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 32 }}>
         <div>
           <h1 style={{ fontFamily: "'Fraunces', serif", fontWeight: 900, fontSize: 26, color: "#F9DF6D" }}>Puzzle Lab</h1>
           <p style={{ color: "#666", fontSize: 12, marginTop: 3 }}>Welcome, {user.displayName}</p>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button onClick={() => nav("friends")} style={{ padding: "7px 14px", borderRadius: 8, background: "#1a1a1b", color: "#97C1F7", fontSize: 12, fontWeight: 600 }}>Friends{req > 0 ? ` (${req})` : ""}</button>
           <button onClick={() => nav("leaderboard")} style={{ padding: "7px 14px", borderRadius: 8, background: "#1a1a1b", color: "#C4A0E8", fontSize: 12, fontWeight: 600 }}>Leaderboard</button>
           <button onClick={logout} style={{ padding: "7px 14px", borderRadius: 8, background: "#1a1a1b", color: "#555", fontSize: 12, fontWeight: 600 }}>Sign Out</button>
@@ -334,7 +334,7 @@ function Home({ user, db, nav, logout, notify, updateUser }) {
 
       {/* Create buttons */}
       <p style={{ fontSize: 11, fontWeight: 700, color: "#555", textTransform: "uppercase", letterSpacing: 2, marginBottom: 12 }}>Create a Puzzle</p>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10, marginBottom: 36 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10, marginBottom: 36 }}>
         {Object.entries(GAME_TYPES).map(([key, g]) => (
           <button key={key} onClick={() => nav("create", key)} style={{ padding: "18px 14px", borderRadius: 14, background: "#141415", border: "1px solid #1e1e1e", textAlign: "left" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
@@ -519,7 +519,7 @@ function CreateWordle({ user, db, onBack, notify, updateUser }) {
 // ─── Strands Grid Generator ───
 // Backtracking algorithm: places words as snaking paths through adjacent cells.
 // Every cell must be used by exactly one word — no filler letters.
-// The spangram (allWords[0]) MUST span from one edge to a different edge.
+// The spangram (allWords[0]) MUST span from one edge to the OPPOSITE edge.
 function generateStrandsGrid(allWords) {
   const totalLetters = allWords.reduce((s, w) => s + w.length, 0);
   const cols = 6;
@@ -528,7 +528,6 @@ function generateStrandsGrid(allWords) {
 
   const spangram = allWords[0];
   const otherWords = allWords.slice(1).sort((a, b) => b.length - a.length);
-  // Place spangram first, then other words longest-first
   const sortedWords = [spangram, ...otherWords];
 
   const grid = Array.from({ length: rows }, () => Array(cols).fill(null));
@@ -537,7 +536,6 @@ function generateStrandsGrid(allWords) {
   const dirs = [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]];
 
   const isEdge = (r, c) => r === 0 || r === rows - 1 || c === 0 || c === cols - 1;
-  // Determine which edge a cell is on (can be multiple for corners)
   const getEdges = (r, c) => {
     const e = [];
     if (r === 0) e.push("top");
@@ -546,13 +544,13 @@ function generateStrandsGrid(allWords) {
     if (c === cols - 1) e.push("right");
     return e;
   };
-  // Check if two cells are on different edges
-  const onDifferentEdges = (r1, c1, r2, c2) => {
+  // Opposite edge pairs: top↔bottom, left↔right
+  const OPPOSITE = { top: "bottom", bottom: "top", left: "right", right: "left" };
+  const onOppositeEdges = (r1, c1, r2, c2) => {
     const e1 = getEdges(r1, c1);
     const e2 = getEdges(r2, c2);
-    // They must not share any edge
     if (e1.length === 0 || e2.length === 0) return false;
-    for (const a of e1) for (const b of e2) if (a !== b) return true;
+    for (const a of e1) for (const b of e2) if (OPPOSITE[a] === b) return true;
     return false;
   };
 
@@ -585,11 +583,11 @@ function generateStrandsGrid(allWords) {
 
   function placeWord(wi, charIdx, path) {
     if (charIdx === sortedWords[wi].length) {
-      // For spangram (wi===0): verify it spans edge-to-edge
+      // For spangram (wi===0): verify it spans to the opposite edge
       if (wi === 0) {
         const [sr, sc] = path[0];
         const [er, ec] = path[path.length - 1];
-        if (!isEdge(sr, sc) || !isEdge(er, ec) || !onDifferentEdges(sr, sc, er, ec)) {
+        if (!isEdge(sr, sc) || !isEdge(er, ec) || !onOppositeEdges(sr, sc, er, ec)) {
           return false;
         }
       }
@@ -603,7 +601,7 @@ function generateStrandsGrid(allWords) {
     if (charIdx === 0) {
       candidates = [];
       if (wi === 0) {
-        // Spangram must start on an edge
+        // Spangram must start on an edge cell
         for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
           if (grid[r][c] === null && isEdge(r, c)) candidates.push([r, c]);
         }
@@ -616,7 +614,23 @@ function generateStrandsGrid(allWords) {
     } else {
       const [pr, pc] = path[path.length - 1];
       candidates = getNeighbors(pr, pc).filter(([r, c]) => grid[r][c] === null);
-      for (let i = candidates.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [candidates[i], candidates[j]] = [candidates[j], candidates[i]]; }
+      // Bias spangram toward the opposite edge to help it span
+      if (wi === 0) {
+        const startEdges = getEdges(path[0][0], path[0][1]);
+        candidates.sort((a, b) => {
+          const aEdge = isEdge(a[0], a[1]) ? 1 : 0;
+          const bEdge = isEdge(b[0], b[1]) ? 1 : 0;
+          return bEdge - aEdge;
+        });
+        // Shuffle within groups to maintain randomness
+        const edgeCands = candidates.filter(([r, c]) => isEdge(r, c));
+        const innerCands = candidates.filter(([r, c]) => !isEdge(r, c));
+        for (let i = edgeCands.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [edgeCands[i], edgeCands[j]] = [edgeCands[j], edgeCands[i]]; }
+        for (let i = innerCands.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [innerCands[i], innerCands[j]] = [innerCands[j], innerCands[i]]; }
+        candidates = [...innerCands, ...edgeCands]; // inner first so spangram traverses through grid
+      } else {
+        for (let i = candidates.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [candidates[i], candidates[j]] = [candidates[j], candidates[i]]; }
+      }
     }
 
     for (const [r, c] of candidates) {
@@ -644,7 +658,7 @@ function generateStrandsGrid(allWords) {
     return placeWord(wi, 0, []);
   }
 
-  for (let attempt = 0; attempt < 12; attempt++) {
+  for (let attempt = 0; attempt < 30; attempt++) {
     for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) { grid[r][c] = null; owner[r][c] = -1; }
     Object.keys(placements).forEach(k => delete placements[k]);
     if (tryNextWord(0)) {
@@ -887,7 +901,7 @@ function PlayConnections({ user, puzzle, onBack, notify, updateUser }) {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, marginBottom: 16, animation: shaking ? "shake .35s ease" : undefined }}>
           {board.map(b => {
             const s = sel.includes(b.word);
-            return <button key={b.word} onClick={() => toggle(b.word)} style={{ padding: "14px 4px", borderRadius: 8, fontSize: 12, fontWeight: 700, background: s ? "#e8e8e8" : "#1e1e1e", color: s ? "#0a0a0b" : "#bbb", textTransform: "uppercase", letterSpacing: .3, lineHeight: 1.2, minHeight: 50, wordBreak: "break-word", animation: s ? "pop .2s ease" : undefined }}>{b.word}</button>;
+            return <button key={b.word} onClick={() => toggle(b.word)} style={{ padding: "clamp(10px, 3vw, 14px) 4px", borderRadius: 8, fontSize: "clamp(10px, 3vw, 13px)", fontWeight: 700, background: s ? "#e8e8e8" : "#1e1e1e", color: s ? "#0a0a0b" : "#bbb", textTransform: "uppercase", letterSpacing: .3, lineHeight: 1.2, minHeight: 48, wordBreak: "break-word", animation: s ? "pop .2s ease" : undefined }}>{b.word}</button>;
           })}
         </div>
       )}
@@ -908,10 +922,10 @@ function PlayConnections({ user, puzzle, onBack, notify, updateUser }) {
 }
 
 const cBtn = { padding: "10px 20px", borderRadius: 24, background: "#1e1e1e", color: "#bbb", fontSize: 13, fontWeight: 600, border: "1px solid #2a2a2a" };
-const GameOver = ({ won, mistakes, onBack, color }) => (
+const GameOver = ({ won, mistakes, onBack, color, winMessage }) => (
   <div style={{ textAlign: "center", marginTop: 20, animation: "fadeUp .4s ease" }}>
     <p style={{ fontSize: 26, fontFamily: "'Fraunces', serif", fontWeight: 800, color: won ? "#6AAA64" : "#e74c3c", marginBottom: 6 }}>{won ? "Brilliant!" : "Next time!"}</p>
-    <p style={{ color: "#555", fontSize: 13, marginBottom: 18 }}>{won ? `${mistakes} mistake${mistakes !== 1 ? "s" : ""}` : ""}</p>
+    <p style={{ color: "#555", fontSize: 13, marginBottom: 18 }}>{won ? (winMessage || `${mistakes} mistake${mistakes !== 1 ? "s" : ""}`) : ""}</p>
     <button onClick={onBack} style={{ padding: "10px 28px", borderRadius: 24, background: color, color: "#0a0a0b", fontSize: 13, fontWeight: 700 }}>Back to Home</button>
   </div>
 );
@@ -1076,7 +1090,7 @@ function PlayWordle({ user, puzzle, onBack, notify, updateUser }) {
               {Array.from({ length: 5 }, (_, ci) => {
                 const letter = g ? g.word[ci] : (isCurrent ? (current.toUpperCase()[ci] || "") : "");
                 const bg = g ? colorMap[g.colors[ci]] : (letter ? "#3a3a3c" : "#1a1a1b");
-                return <div key={ci} style={{ width: 52, height: 52, borderRadius: 6, background: bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, fontWeight: 800, color: "#fff", border: isCurrent && !letter ? "2px solid #3a3a3c" : isCurrent && letter ? "2px solid #555" : "2px solid transparent", animation: g ? "reveal .3s ease" : undefined, animationDelay: g ? `${ci * 0.1}s` : undefined }}>{letter}</div>;
+                return <div key={ci} style={{ width: "clamp(44px, 13vw, 56px)", height: "clamp(44px, 13vw, 56px)", borderRadius: 6, background: bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "clamp(18px, 5vw, 22px)", fontWeight: 800, color: "#fff", border: isCurrent && !letter ? "2px solid #3a3a3c" : isCurrent && letter ? "2px solid #555" : "2px solid transparent", animation: g ? "reveal .3s ease" : undefined, animationDelay: g ? `${ci * 0.1}s` : undefined }}>{letter}</div>;
               })}
             </div>
           );
@@ -1087,16 +1101,16 @@ function PlayWordle({ user, puzzle, onBack, notify, updateUser }) {
       {!over && (
         <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "center" }}>
           {kbRows.map((row, ri) => (
-            <div key={ri} style={{ display: "flex", gap: 5 }}>
-              {ri === 2 && <button onClick={submit} style={{ padding: "10px 12px", borderRadius: 8, background: "#444", color: "#fff", fontSize: 11, fontWeight: 700, minWidth: 58, border: "2px solid #555" }}>ENTER</button>}
+            <div key={ri} style={{ display: "flex", gap: "clamp(3px, 1vw, 5px)", justifyContent: "center", width: "100%" }}>
+              {ri === 2 && <button onClick={submit} style={{ padding: "10px 8px", borderRadius: 8, background: "#444", color: "#fff", fontSize: 11, fontWeight: 700, minWidth: "clamp(44px, 12vw, 58px)", border: "2px solid #555" }}>ENTER</button>}
               {row.split("").map(l => (
                 <button key={l} onClick={() => current.length < 5 && setCurrent(p => p + l)} style={{
-                  width: 34, height: 48, borderRadius: 8, fontSize: 14,
+                  width: "clamp(26px, 8vw, 36px)", height: 48, borderRadius: 8, fontSize: "clamp(12px, 3.5vw, 14px)",
                   transition: "all 0.2s ease",
                   ...getKeyStyle(l),
                 }}>{l}</button>
               ))}
-              {ri === 2 && <button onClick={() => setCurrent(p => p.slice(0, -1))} style={{ padding: "10px 12px", borderRadius: 8, background: "#444", color: "#fff", fontSize: 13, fontWeight: 700, minWidth: 58, border: "2px solid #555" }}>⌫</button>}
+              {ri === 2 && <button onClick={() => setCurrent(p => p.slice(0, -1))} style={{ padding: "10px 8px", borderRadius: 8, background: "#444", color: "#fff", fontSize: 13, fontWeight: 700, minWidth: "clamp(44px, 12vw, 58px)", border: "2px solid #555" }}>⌫</button>}
             </div>
           ))}
         </div>
@@ -1105,7 +1119,7 @@ function PlayWordle({ user, puzzle, onBack, notify, updateUser }) {
       {over && (
         <div style={{ textAlign: "center" }}>
           {!won && <p style={{ color: "#C9B458", fontSize: 14, marginBottom: 8 }}>The word was: <strong>{word}</strong></p>}
-          <GameOver won={won} mistakes={won ? guesses.length : maxGuesses} onBack={onBack} color="#6AAA64" />
+          <GameOver won={won} mistakes={won ? guesses.length : maxGuesses} onBack={onBack} color="#6AAA64" winMessage={won ? `You got it in ${guesses.length}!` : undefined} />
         </div>
       )}
     </div>
@@ -1203,15 +1217,23 @@ function PlayStrands({ user, puzzle, onBack, notify, updateUser }) {
   }
 
   const getCellFromPoint = (x, y) => {
+    let closest = null;
+    let closestDist = Infinity;
     for (const [key, el] of Object.entries(cellRefs.current)) {
       if (!el) continue;
       const rect = el.getBoundingClientRect();
-      if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      const dist = Math.sqrt((x - cx) ** 2 + (y - cy) ** 2);
+      // Accept if inside cell or within a small buffer for touch tolerance
+      const radius = Math.max(rect.width, rect.height) / 2 + 4;
+      if (dist < radius && dist < closestDist) {
+        closestDist = dist;
         const [r, c] = key.split("-").map(Number);
-        return { r, c };
+        closest = { r, c };
       }
     }
-    return null;
+    return closest;
   };
 
   const addToSel = (r, c) => {
@@ -1384,9 +1406,9 @@ function PlayStrands({ user, puzzle, onBack, notify, updateUser }) {
         </div>
       </div>
 
-      {/* Grid — centered, cells sized to fill width */}
-      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", width: "100%", touchAction: "none", padding: "0 8px" }}>
-        <div ref={gridRef} style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "center", position: "relative", touchAction: "none", width: "100%" }}>
+      {/* Grid — centered, cells sized to fill width with generous touch targets */}
+      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", width: "100%", touchAction: "none", padding: "0 12px" }}>
+        <div ref={gridRef} style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "center", position: "relative", touchAction: "none", width: "100%", maxWidth: 420 }}>
           {linePath && linePath.length >= 2 && (
             <svg style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 2 }}>
               <polyline
@@ -1396,7 +1418,7 @@ function PlayStrands({ user, puzzle, onBack, notify, updateUser }) {
             </svg>
           )}
           {Array.from({ length: rows }, (_, r) => (
-            <div key={r} style={{ display: "flex", gap: 4, justifyContent: "center", width: "100%" }}>
+            <div key={r} style={{ display: "flex", gap: 6, justifyContent: "center", width: "100%" }}>
               {Array.from({ length: cols }, (_, c) => {
                 const k = cellKey(r, c);
                 const isFound = foundCellSet.has(k);
@@ -1412,11 +1434,10 @@ function PlayStrands({ user, puzzle, onBack, notify, updateUser }) {
                     onMouseDown={(e) => { e.preventDefault(); handlePointerDown(r, c); }}
                     onTouchStart={(e) => { e.preventDefault(); handlePointerDown(r, c); }}
                     style={{
-                      width: "calc((100vw - 48px) / 6)",
-                      maxWidth: 64,
+                      width: "calc((min(100vw, 420px) - 54px) / 6)",
                       aspectRatio: "1",
                       borderRadius: "50%",
-                      fontSize: 18, fontWeight: 800,
+                      fontSize: "clamp(16px, 4.5vw, 20px)", fontWeight: 800,
                       display: "flex", alignItems: "center", justifyContent: "center",
                       background: isSpangram ? "#F9DF6D"
                         : isFound ? "#97C1F7"
@@ -1425,7 +1446,7 @@ function PlayStrands({ user, puzzle, onBack, notify, updateUser }) {
                         : "#1a1a1c",
                       color: (isFound || isSpangram || isHint) ? "#0a0a0b" : isSel ? "#0a0a0b" : "#ccc",
                       transition: "background 0.15s, transform 0.15s, box-shadow 0.2s",
-                      transform: isRecent ? "scale(1.12)" : isSel ? "scale(1.1)" : isHint ? "scale(1.05)" : "scale(1)",
+                      transform: isRecent ? "scale(1.12)" : isSel ? "scale(1.08)" : isHint ? "scale(1.05)" : "scale(1)",
                       cursor: isFound ? "default" : "pointer",
                       position: "relative",
                       zIndex: isSel ? 3 : isRecent ? 2 : 1,
@@ -1669,9 +1690,9 @@ function Leaderboard({ user, db, onBack }) {
           {stats.map((d, i) => (
             <div key={d.username} style={{ background: "#141415", borderRadius: 12, padding: "14px 16px", border: i === 0 ? "1px solid #F9DF6D33" : "1px solid #1e1e1e", display: "flex", alignItems: "center", gap: 14 }}>
               <div style={{ width: 32, height: 32, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", background: i === 0 ? "#F9DF6D" : i === 1 ? "#999" : i === 2 ? "#cd7f32" : "#2a2a2a", color: i < 3 ? "#0a0a0b" : "#666", fontWeight: 800, fontSize: 14, flexShrink: 0 }}>{i + 1}</div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <p style={{ fontWeight: 700, fontSize: 14, color: d.username === user.username ? "#F9DF6D" : "#e8e8e8" }}>{d.displayName}{d.username === user.username && <span style={{ fontSize: 10, color: "#666", marginLeft: 6 }}>(you)</span>}</p>
-                <p style={{ color: "#555", fontSize: 11, marginTop: 2 }}>{d.wins}W / {d.played}P · {d.wr}% · {d.perf} perfect · avg {d.avgM}m</p>
+              <div style={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
+                <p style={{ fontWeight: 700, fontSize: 14, color: d.username === user.username ? "#F9DF6D" : "#e8e8e8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.displayName}{d.username === user.username && <span style={{ fontSize: 10, color: "#666", marginLeft: 6 }}>(you)</span>}</p>
+                <p style={{ color: "#555", fontSize: 11, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.wins}W / {d.played}P · {d.wr}% · {d.perf} perfect · avg {d.avgM}m</p>
               </div>
             </div>
           ))}

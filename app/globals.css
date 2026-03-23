@@ -22,11 +22,17 @@
   padding: 0;
 }
 
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
 body {
   background: var(--bg);
   color: var(--text);
   font-family: 'DM Sans', 'Segoe UI', sans-serif;
   min-height: 100vh;
+  min-height: 100dvh;
+  overflow-x: hidden;
 }
 
 input, textarea {
@@ -38,6 +44,8 @@ button {
   font-family: inherit;
   border: none;
   transition: all 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
 }
 
 button:hover {
@@ -46,7 +54,7 @@ button:hover {
 }
 
 button:active {
-  transform: translateY(0);
+  transform: translateY(0) scale(0.98);
 }
 
 @keyframes slideD {
