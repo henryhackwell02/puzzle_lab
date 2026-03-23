@@ -10,7 +10,8 @@ import {
   declineFriendRequest as sbDeclineFriendRequest, getFriends,
   removeFriend as sbRemoveFriend, saveResult as sbSaveResult,
   getMyResults, getLeaderboardStats, getFriendsPuzzles,
-  updatePuzzleArchived as sbUpdatePuzzleArchived
+  updatePuzzleArchived as sbUpdatePuzzleArchived,
+  updatePuzzle as sbUpdatePuzzle
 } from "@/lib/supabase";
 
 /* ═══════════════════════════════════════════════════
@@ -253,6 +254,7 @@ export default function PuzzleLab() {
         {screen === "auth" && <Auth onLogin={login} onRegister={register} isSupabase={SB} />}
         {screen === "home" && user && <Home user={user} db={db} nav={nav} logout={logout} notify={notify} updateUser={updateUser} supaUser={supaUser} reloadUser={reloadUser} />}
         {screen === "create" && user && <Creator user={user} db={db} gameType={activeGame} onBack={() => nav("home")} notify={notify} updateUser={updateUser} supaUser={supaUser} reloadUser={reloadUser} />}
+        {screen === "edit" && user && activePuzzle && <Creator user={user} db={db} gameType={activePuzzle.type} editPuzzle={activePuzzle} onBack={() => nav("home")} notify={notify} updateUser={updateUser} supaUser={supaUser} reloadUser={reloadUser} />}
         {screen === "play" && user && activePuzzle && <Player user={user} puzzle={activePuzzle} onBack={() => nav("home")} notify={notify} updateUser={updateUser} supaUser={supaUser} />}
         {screen === "friends" && user && <Friends user={user} db={db} onBack={() => nav("home")} updateUser={updateUser} notify={notify} supaUser={supaUser} reloadUser={reloadUser} />}
         {screen === "leaderboard" && user && <Leaderboard user={user} db={db} onBack={() => nav("home")} supaUser={supaUser} />}
@@ -447,6 +449,7 @@ function Home({ user, db, nav, logout, notify, updateUser }) {
               </p>
             : shownPuzzles.map(p => (
                 <PCard key={p.id} p={p} res={user.results} onPlay={() => nav("play", null, p)}
+                  onEdit={() => nav("edit", null, p)}
                   onDel={() => setConfirmDelete(p.id)}
                   onArchive={() => toggleArchive(p.id)}
                   onShare={(user.friends || []).length > 0 ? () => setShareModal(p.id) : null}
@@ -490,7 +493,7 @@ const Sec = ({ title, color, children }) => (
   </div>
 );
 
-const PCard = ({ p, sub, res, onPlay, onDel, onArchive, onShare, archived, owner }) => {
+const PCard = ({ p, sub, res, onPlay, onEdit, onDel, onArchive, onShare, archived, owner }) => {
   const r = res?.[p.id]; const g = GAME_TYPES[p.type];
   return (
     <div style={{ background: "#141415", borderRadius: 12, padding: "14px 16px", border: "1px solid #1e1e1e", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
@@ -506,6 +509,7 @@ const PCard = ({ p, sub, res, onPlay, onDel, onArchive, onShare, archived, owner
       </div>
       <div style={{ display: "flex", gap: 6, flexShrink: 0, alignItems: "center" }}>
         <button onClick={onPlay} style={{ padding: "7px 16px", borderRadius: 7, fontSize: 12, fontWeight: 600, background: r ? "#1e1e1e" : g?.color || "#F9DF6D", color: r ? (g?.color || "#F9DF6D") : "#0a0a0b" }}>{r ? "Replay" : "Play"}</button>
+        {owner && onEdit && <button onClick={onEdit} title="Edit puzzle" style={{ padding: "7px 10px", borderRadius: 7, fontSize: 12, background: "#1a1a1b", color: "#F9DF6D" }}>✎</button>}
         {owner && onShare && <button onClick={onShare} title="Share with friends" style={{ padding: "7px 10px", borderRadius: 7, fontSize: 12, background: "#1a1a1b", color: "#97C1F7" }}>↗</button>}
         {owner && onArchive && <button onClick={onArchive} title={archived ? "Unarchive" : "Archive"} style={{ padding: "7px 10px", borderRadius: 7, fontSize: 12, background: "#1a1a1b", color: archived ? "#6AAA64" : "#555" }}>{archived ? "↑" : "↓"}</button>}
         {owner && onDel && <button onClick={onDel} style={{ padding: "7px 10px", borderRadius: 7, fontSize: 12, background: "#1a1a1b", color: "#555" }}>✕</button>}
@@ -542,8 +546,8 @@ const ShareModal = ({ puzzleId, friends, onShare, onClose }) => {
 // ═══════════════════════════════════════
 // CREATOR — routes to the right game creator
 // ═══════════════════════════════════════
-function Creator({ user, db, gameType, onBack, notify, updateUser }) {
-  const props = { user, db, onBack, notify, updateUser };
+function Creator({ user, db, gameType, editPuzzle, onBack, notify, updateUser }) {
+  const props = { user, db, onBack, notify, updateUser, editPuzzle };
   if (gameType === "connections") return <CreateConnections {...props} />;
   if (gameType === "wordle") return <CreateWordle {...props} />;
   if (gameType === "strands") return <CreateStrands {...props} />;
@@ -586,6 +590,19 @@ function savePuzzle(user, updateUser, notify, type, title, data, shareWith, onBa
   onBack();
 }
 
+function updateExistingPuzzle(user, updateUser, notify, puzzleId, title, data, onBack) {
+  if (!title.trim()) { notify("Give your puzzle a title", "error"); return; }
+  updateUser(user.username, u => {
+    u.puzzles = u.puzzles.map(p => p.id === puzzleId ? { ...p, title: title.trim(), data } : p);
+    return u;
+  });
+  if (SB && user.supaId) {
+    sbUpdatePuzzle(puzzleId, user.supaId, { title: title.trim(), data });
+  }
+  notify("Puzzle updated!", "success");
+  onBack();
+}
+
 function SharePicker({ friends, shareWith, setShareWith }) {
   if (friends.length === 0) return null;
   const getKey = (f) => typeof f === "object" ? (f.id || f.username) : f;
@@ -603,9 +620,10 @@ function SharePicker({ friends, shareWith, setShareWith }) {
 }
 
 // ─── Connections Creator ───
-function CreateConnections({ user, db, onBack, notify, updateUser }) {
-  const [title, setTitle] = useState("");
-  const [groups, setGroups] = useState(CONN_ORDER.map(c => ({ color: c, category: "", words: ["", "", "", ""] })));
+function CreateConnections({ user, db, onBack, notify, updateUser, editPuzzle }) {
+  const ep = editPuzzle?.data;
+  const [title, setTitle] = useState(editPuzzle?.title || "");
+  const [groups, setGroups] = useState(ep?.groups ? ep.groups.map(g => ({ ...g, words: [...g.words] })) : CONN_ORDER.map(c => ({ color: c, category: "", words: ["", "", "", ""] })));
   const [shareWith, setShareWith] = useState([]);
   const updG = (i, f, v) => setGroups(p => p.map((g, idx) => idx === i ? { ...g, [f]: v } : g));
   const updW = (gi, wi, v) => setGroups(p => p.map((g, idx) => idx === gi ? { ...g, words: g.words.map((w, j) => j === wi ? v : w) } : g));
@@ -618,13 +636,15 @@ function CreateConnections({ user, db, onBack, notify, updateUser }) {
     const all = groups.flatMap(g => g.words.map(w => w.trim().toUpperCase()));
     const dup = all.find((w, i) => all.indexOf(w) !== i);
     if (dup) return notify(`Duplicate: "${dup}"`, "error");
-    savePuzzle(user, updateUser, notify, "connections", title, { groups: groups.map(g => ({ color: g.color, category: g.category.trim(), words: g.words.map(w => w.trim().toUpperCase()) })) }, shareWith, onBack);
+    const data = { groups: groups.map(g => ({ color: g.color, category: g.category.trim(), words: g.words.map(w => w.trim().toUpperCase()) })) };
+    if (editPuzzle) { updateExistingPuzzle(user, updateUser, notify, editPuzzle.id, title, data, onBack); }
+    else { savePuzzle(user, updateUser, notify, "connections", title, data, shareWith, onBack); }
   };
 
   return (
     <div style={{ maxWidth: 600, margin: "0 auto", padding: "24px 20px", animation: "fadeUp .4s ease" }}>
       <BackBtn onClick={onBack} />
-      <Title color="#F9DF6D">Create Connections</Title>
+      <Title color="#F9DF6D">{editPuzzle ? "Edit" : "Create"} Connections</Title>
       <input placeholder="Puzzle title..." value={title} onChange={e => setTitle(e.target.value)} style={{ ...inp, marginBottom: 24, fontSize: 16, fontWeight: 600 }} />
       {groups.map((g, i) => (
         <div key={g.color} style={{ background: "#141415", borderRadius: 14, padding: 16, marginBottom: 12, border: `1px solid ${CONN_COLORS[g.color].bg}22` }}>
@@ -638,37 +658,40 @@ function CreateConnections({ user, db, onBack, notify, updateUser }) {
           </div>
         </div>
       ))}
-      <SharePicker friends={user.friends || []} shareWith={shareWith} setShareWith={setShareWith} />
-      <button onClick={save} style={{ width: "100%", padding: "14px 0", borderRadius: 12, background: "#F9DF6D", color: "#0a0a0b", fontSize: 15, fontWeight: 700 }}>Create Puzzle</button>
+      {!editPuzzle && <SharePicker friends={user.friends || []} shareWith={shareWith} setShareWith={setShareWith} />}
+      <button onClick={save} style={{ width: "100%", padding: "14px 0", borderRadius: 12, background: "#F9DF6D", color: "#0a0a0b", fontSize: 15, fontWeight: 700 }}>{editPuzzle ? "Save Changes" : "Create Puzzle"}</button>
     </div>
   );
 }
 
 // ─── Wordle Creator ───
-function CreateWordle({ user, db, onBack, notify, updateUser }) {
-  const [title, setTitle] = useState("");
-  const [word, setWord] = useState("");
-  const [hint, setHint] = useState("");
+function CreateWordle({ user, db, onBack, notify, updateUser, editPuzzle }) {
+  const ep = editPuzzle?.data;
+  const [title, setTitle] = useState(editPuzzle?.title || "");
+  const [word, setWord] = useState(ep?.word || "");
+  const [hint, setHint] = useState(ep?.hint || "");
   const [shareWith, setShareWith] = useState([]);
 
   const save = () => {
     const w = word.trim().toUpperCase();
     if (w.length !== 5 || !/^[A-Z]+$/.test(w)) return notify("Word must be exactly 5 letters", "error");
-    savePuzzle(user, updateUser, notify, "wordle", title, { word: w, hint: hint.trim() }, shareWith, onBack);
+    const data = { word: w, hint: hint.trim() };
+    if (editPuzzle) { updateExistingPuzzle(user, updateUser, notify, editPuzzle.id, title, data, onBack); }
+    else { savePuzzle(user, updateUser, notify, "wordle", title, data, shareWith, onBack); }
   };
 
   return (
     <div style={{ maxWidth: 480, margin: "0 auto", padding: "24px 20px", animation: "fadeUp .4s ease" }}>
       <BackBtn onClick={onBack} />
-      <Title color="#6AAA64">Create Wordle</Title>
+      <Title color="#6AAA64">{editPuzzle ? "Edit" : "Create"} Wordle</Title>
       <input placeholder="Puzzle title..." value={title} onChange={e => setTitle(e.target.value)} style={{ ...inp, marginBottom: 16, fontSize: 16, fontWeight: 600 }} />
       <input placeholder="Secret 5-letter word..." value={word} onChange={e => setWord(e.target.value.slice(0, 5))} maxLength={5} style={{ ...inp, marginBottom: 12, fontSize: 20, fontWeight: 700, textTransform: "uppercase", letterSpacing: 6, textAlign: "center" }} />
       <div style={{ display: "flex", gap: 8, justifyContent: "center", marginBottom: 16 }}>
         {[0,1,2,3,4].map(i => <div key={i} style={{ width: 44, height: 44, borderRadius: 8, background: word.trim().toUpperCase()[i] ? "#6AAA64" : "#1e1e1e", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, fontWeight: 800, color: "#fff" }}>{(word.trim().toUpperCase()[i]) || ""}</div>)}
       </div>
       <input placeholder="Hint (optional)..." value={hint} onChange={e => setHint(e.target.value)} style={{ ...inp, marginBottom: 20 }} />
-      <SharePicker friends={user.friends || []} shareWith={shareWith} setShareWith={setShareWith} />
-      <button onClick={save} style={{ width: "100%", padding: "14px 0", borderRadius: 12, background: "#6AAA64", color: "#fff", fontSize: 15, fontWeight: 700 }}>Create Puzzle</button>
+      {!editPuzzle && <SharePicker friends={user.friends || []} shareWith={shareWith} setShareWith={setShareWith} />}
+      <button onClick={save} style={{ width: "100%", padding: "14px 0", borderRadius: 12, background: "#6AAA64", color: "#fff", fontSize: 15, fontWeight: 700 }}>{editPuzzle ? "Save Changes" : "Create Puzzle"}</button>
     </div>
   );
 }
@@ -905,11 +928,12 @@ function _generateStrandsGridWithCols(allWords, totalLetters, cols) {
 }
 
 // ─── Strands Creator ───
-function CreateStrands({ user, db, onBack, notify, updateUser }) {
-  const [title, setTitle] = useState("");
-  const [theme, setTheme] = useState("");
-  const [wordsInput, setWordsInput] = useState("");
-  const [spangramInput, setSpangramInput] = useState("");
+function CreateStrands({ user, db, onBack, notify, updateUser, editPuzzle }) {
+  const ep = editPuzzle?.data;
+  const [title, setTitle] = useState(editPuzzle?.title || "");
+  const [theme, setTheme] = useState(ep?.theme || "");
+  const [wordsInput, setWordsInput] = useState(ep?.words ? ep.words.join(", ") : "");
+  const [spangramInput, setSpangramInput] = useState(ep?.spangram || "");
   const [shareWith, setShareWith] = useState([]);
   const [generating, setGenerating] = useState(false);
   const [preview, setPreview] = useState(null);
@@ -947,10 +971,12 @@ function CreateStrands({ user, db, onBack, notify, updateUser }) {
     if (!title.trim()) return notify("Give your puzzle a title", "error");
     const spangram = spangramInput.trim().toUpperCase();
     const words = wordsInput.split(",").map(w => w.trim().toUpperCase()).filter(Boolean);
-    savePuzzle(user, updateUser, notify, "strands", title, {
+    const data = {
       theme: theme.trim() || title.trim(), spangram, words,
       grid: preview.grid, rows: preview.rows, cols: preview.cols, placements: preview.placements
-    }, shareWith, onBack);
+    };
+    if (editPuzzle) { updateExistingPuzzle(user, updateUser, notify, editPuzzle.id, title, data, onBack); }
+    else { savePuzzle(user, updateUser, notify, "strands", title, data, shareWith, onBack); }
   };
 
   const totalLetters = (() => {
@@ -965,7 +991,7 @@ function CreateStrands({ user, db, onBack, notify, updateUser }) {
   return (
     <div style={{ maxWidth: 520, margin: "0 auto", padding: "24px 20px", animation: "fadeUp .4s ease" }}>
       <BackBtn onClick={onBack} />
-      <Title color="#97C1F7">Create Strands</Title>
+      <Title color="#97C1F7">{editPuzzle ? "Edit" : "Create"} Strands</Title>
       <p style={{ color: "#666", fontSize: 12, marginBottom: 20, lineHeight: 1.6 }}>
         Enter a theme, a spangram (the key theme word that captures the theme), and words to hide. Every cell in the grid will be used by exactly one word — no filler. Total letters must be divisible by 5, 6, 7, or 8 (the system picks the best grid width).
       </p>
@@ -1003,16 +1029,17 @@ function CreateStrands({ user, db, onBack, notify, updateUser }) {
         </div>
       )}
 
-      <SharePicker friends={user.friends || []} shareWith={shareWith} setShareWith={setShareWith} />
-      <button onClick={save} disabled={!preview} style={{ width: "100%", padding: "14px 0", borderRadius: 12, background: preview ? "#97C1F7" : "#1e1e1e", color: preview ? "#0a0a0b" : "#555", fontSize: 15, fontWeight: 700 }}>Create Puzzle</button>
+      {!editPuzzle && <SharePicker friends={user.friends || []} shareWith={shareWith} setShareWith={setShareWith} />}
+      <button onClick={save} disabled={!preview} style={{ width: "100%", padding: "14px 0", borderRadius: 12, background: preview ? "#97C1F7" : "#1e1e1e", color: preview ? "#0a0a0b" : "#555", fontSize: 15, fontWeight: 700 }}>{editPuzzle ? "Save Changes" : "Create Puzzle"}</button>
     </div>
   );
 }
 
 // ─── Threads Creator ───
-function CreateThreads({ user, db, onBack, notify, updateUser }) {
-  const [title, setTitle] = useState("");
-  const [chain, setChain] = useState([
+function CreateThreads({ user, db, onBack, notify, updateUser, editPuzzle }) {
+  const ep = editPuzzle?.data;
+  const [title, setTitle] = useState(editPuzzle?.title || "");
+  const [chain, setChain] = useState(ep?.chain ? ep.chain.map(c => ({ ...c })) : [
     { word: "", visible: true, linkHint: "" },
     { word: "", visible: false, linkHint: "" },
     { word: "", visible: false, linkHint: "" },
@@ -1028,13 +1055,14 @@ function CreateThreads({ user, db, onBack, notify, updateUser }) {
     for (let i = 0; i < chain.length; i++) { if (!chain[i].word.trim()) return notify("Fill in all words", "error"); }
     for (let i = 0; i < chain.length; i++) { if (!chain[i].visible && !chain[i].linkHint.trim()) return notify("Hidden words need a link hint", "error"); }
     const data = { chain: chain.map(c => ({ word: c.word.trim().toUpperCase(), visible: c.visible, linkHint: c.linkHint.trim() })) };
-    savePuzzle(user, updateUser, notify, "threads", title, data, shareWith, onBack);
+    if (editPuzzle) { updateExistingPuzzle(user, updateUser, notify, editPuzzle.id, title, data, onBack); }
+    else { savePuzzle(user, updateUser, notify, "threads", title, data, shareWith, onBack); }
   };
 
   return (
     <div style={{ maxWidth: 520, margin: "0 auto", padding: "24px 20px", animation: "fadeUp .4s ease" }}>
       <BackBtn onClick={onBack} />
-      <Title color="#C4A0E8">Create Threads</Title>
+      <Title color="#C4A0E8">{editPuzzle ? "Edit" : "Create"} Threads</Title>
       <p style={{ color: "#666", fontSize: 12, marginBottom: 20, lineHeight: 1.6 }}>
         Build a chain of 6 linked words. Mark 3 as visible (given to the player) and 3 as hidden (to guess). For each hidden word, write a hint describing how it links to its neighbours.
       </p>
@@ -1051,8 +1079,8 @@ function CreateThreads({ user, db, onBack, notify, updateUser }) {
           {!c.visible && <input placeholder="Link hint (how it connects to neighbours)..." value={c.linkHint} onChange={e => updChain(i, "linkHint", e.target.value)} style={{ ...inp, fontSize: 12 }} />}
         </div>
       ))}
-      <SharePicker friends={user.friends || []} shareWith={shareWith} setShareWith={setShareWith} />
-      <button onClick={save} style={{ width: "100%", padding: "14px 0", borderRadius: 12, background: "#C4A0E8", color: "#0a0a0b", fontSize: 15, fontWeight: 700, marginTop: 8 }}>Create Puzzle</button>
+      {!editPuzzle && <SharePicker friends={user.friends || []} shareWith={shareWith} setShareWith={setShareWith} />}
+      <button onClick={save} style={{ width: "100%", padding: "14px 0", borderRadius: 12, background: "#C4A0E8", color: "#0a0a0b", fontSize: 15, fontWeight: 700, marginTop: 8 }}>{editPuzzle ? "Save Changes" : "Create Puzzle"}</button>
     </div>
   );
 }
@@ -2136,7 +2164,9 @@ function Leaderboard({ user, db, onBack, supaUser }) {
         const players = [user.username, ...(user.friends || [])];
         const entries = players.map(p => {
           const d = db[p]; if (!d) return null;
-          const stats = computeStats(Object.values(d.results || {}));
+          const ownIds = new Set((d.puzzles || []).map(pz => pz.id));
+          const filtered = Object.entries(d.results || {}).filter(([pid]) => !ownIds.has(pid)).map(([, r]) => r);
+          const stats = computeStats(filtered);
           return { key: p, displayName: d.displayName, isSelf: p === user.username, ...stats };
         }).filter(Boolean).sort((a, b) => b.wins !== a.wins ? b.wins - a.wins : a.avgLives !== b.avgLives ? (a.avgLives === "-" ? 1 : b.avgLives === "-" ? -1 : parseFloat(a.avgLives) - parseFloat(b.avgLives)) : b.winRate - a.winRate);
         setLbStats(entries);
@@ -2150,7 +2180,7 @@ function Leaderboard({ user, db, onBack, supaUser }) {
       <BackBtn onClick={onBack} />
       <Title color="#C4A0E8">Leaderboard</Title>
       <p style={{ color: "#555", fontSize: 11, marginBottom: 16, lineHeight: 1.5 }}>
-        Ranked by wins, then avg lives lost (guesses, hints, mistakes), then win rate.
+        Ranked by wins, then avg lives lost (guesses, hints, mistakes), then win rate. Only counts puzzles created by others.
       </p>
       {loading ? <p style={{ color: "#555", fontSize: 13 }}>Loading...</p>
         : lbStats.length === 0 ? <p style={{ color: "#555", fontSize: 13 }}>No data yet — play some puzzles!</p> : (
