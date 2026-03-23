@@ -9,7 +9,8 @@ import {
   getFriendRequests, acceptFriendRequest as sbAcceptFriendRequest,
   declineFriendRequest as sbDeclineFriendRequest, getFriends,
   removeFriend as sbRemoveFriend, saveResult as sbSaveResult,
-  getMyResults, getLeaderboardStats, getFriendsPuzzles
+  getMyResults, getLeaderboardStats, getFriendsPuzzles,
+  updatePuzzleArchived as sbUpdatePuzzleArchived
 } from "@/lib/supabase";
 
 /* ═══════════════════════════════════════════════════
@@ -116,6 +117,7 @@ async function loadUserFromSupabase(authUser) {
       id: p.id, type: p.type, title: p.title, data: p.data,
       creator: username, creatorName: profile.display_name,
       createdAt: new Date(p.created_at).getTime(),
+      archived: p.archived || false,
     })),
     friendsPuzzles: friendsPuzzlesData.map(p => ({
       id: p.id, type: p.type, title: p.title, data: p.data,
@@ -363,10 +365,13 @@ function Home({ user, db, nav, logout, notify, updateUser }) {
   };
 
   const toggleArchive = (id) => {
+    const puzzle = allPuzzles.find(p => p.id === id);
+    const newArchived = !puzzle?.archived;
     updateUser(user.username, u => {
-      u.puzzles = u.puzzles.map(p => p.id === id ? { ...p, archived: !p.archived } : p);
+      u.puzzles = u.puzzles.map(p => p.id === id ? { ...p, archived: newArchived } : p);
       return u;
     });
+    if (SB && user.supaId) sbUpdatePuzzleArchived(id, user.supaId, newArchived);
   };
 
   const req = (user.friendRequests || []).length;

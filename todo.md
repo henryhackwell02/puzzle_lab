@@ -25,3 +25,7 @@
 13. On strands, please ensure that after a user correctly guesses a word, a line connects all the lit up letters to make the pattern obvious (as in NYT version).
 
 14. Also please make using a hint optional on strands after users gets enough correct words (that are not the category ones). Currently, the hint is given automatically.
+
+15. When archiving a puzzle and then refreshing the page, it reappears as current. It should stay where assigned.
+
+16. Once a puzzle is created. There should be an option to share it with friends retrospectively too. Users can: share or not upon creation or choose to share later after creating. Only when share is chosen does it appear on friends' puzzles.

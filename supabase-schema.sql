@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS puzzles (
   type TEXT NOT NULL CHECK (type IN ('connections', 'wordle', 'strands', 'threads')),
   title TEXT NOT NULL,
   data JSONB NOT NULL,
+  archived BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -88,6 +89,7 @@ CREATE POLICY "Users can insert own profile" ON profiles FOR INSERT WITH CHECK (
 -- Puzzles: anyone can read, creators can manage own
 CREATE POLICY "Puzzles are viewable by everyone" ON puzzles FOR SELECT USING (true);
 CREATE POLICY "Users can create puzzles" ON puzzles FOR INSERT WITH CHECK (auth.uid() = creator_id);
+CREATE POLICY "Users can update own puzzles" ON puzzles FOR UPDATE USING (auth.uid() = creator_id);
 CREATE POLICY "Users can delete own puzzles" ON puzzles FOR DELETE USING (auth.uid() = creator_id);
 
 -- Shared: users can see their own shared, creators can share
