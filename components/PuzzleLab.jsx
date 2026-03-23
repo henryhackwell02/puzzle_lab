@@ -320,12 +320,19 @@ function Auth({ onLogin, onRegister, isSupabase }) {
 
 function Home({ user, db, nav, logout, notify, updateUser }) {
   const [puzzleTab, setPuzzleTab] = useState("mine");
-  const allPuzzles = [...(user.puzzles || [])].sort((a, b) => b.createdAt - a.createdAt);
+  const [myFilter, setMyFilter] = useState("current");
+  const [confirmDelete, setConfirmDelete] = useState(null);
 
-  // Friends' puzzles — from Supabase data or local db
+  const allPuzzles = [...(user.puzzles || [])].sort((a, b) => b.createdAt - a.createdAt);
+  const currentPuzzles = allPuzzles.filter(p => !p.archived);
+  const archivedPuzzles = allPuzzles.filter(p => p.archived);
+  const shownPuzzles = myFilter === "current" ? currentPuzzles : archivedPuzzles;
+
+  // Friends' puzzles — only non-archived (current) ones
   const friendsPuzzles = (() => {
-    if (user.friendsPuzzles && user.friendsPuzzles.length > 0) return user.friendsPuzzles;
-    // Local mode fallback: gather puzzles from friends in db
+    if (user.friendsPuzzles && user.friendsPuzzles.length > 0) {
+      return user.friendsPuzzles.filter(p => !p.archived);
+    }
     const fps = [];
     for (const f of (user.friends || [])) {
       const fKey = typeof f === "object" ? f.username : f;
@@ -333,7 +340,7 @@ function Home({ user, db, nav, logout, notify, updateUser }) {
       const fData = db[fKey];
       if (fData) {
         for (const p of (fData.puzzles || [])) {
-          fps.push({ ...p, creatorName: fData.displayName || fDisplay });
+          if (!p.archived) fps.push({ ...p, creatorName: fData.displayName || fDisplay });
         }
       }
     }
@@ -345,11 +352,23 @@ function Home({ user, db, nav, logout, notify, updateUser }) {
     const p = (c.puzzles || []).find(x => x.id === ref.puzzleId);
     return p ? { ...p, sharedBy: ref.from, sharedByName: c.displayName } : null;
   }).filter(Boolean).sort((a, b) => b.createdAt - a.createdAt);
-  // Also include Supabase shared puzzles
   const supaShared = (user.sharedPuzzles || []);
   const allShared = [...shared, ...supaShared.filter(sp => !shared.some(s => s.id === sp.id))];
 
-  const del = (id) => { updateUser(user.username, u => { u.puzzles = u.puzzles.filter(p => p.id !== id); delete u.results[id]; return u; }); notify("Deleted", "success"); };
+  const del = (id) => {
+    updateUser(user.username, u => { u.puzzles = u.puzzles.filter(p => p.id !== id); delete u.results[id]; return u; });
+    if (SB && user.supaId) sbDeletePuzzle(id, user.supaId);
+    notify("Deleted", "success");
+    setConfirmDelete(null);
+  };
+
+  const toggleArchive = (id) => {
+    updateUser(user.username, u => {
+      u.puzzles = u.puzzles.map(p => p.id === id ? { ...p, archived: !p.archived } : p);
+      return u;
+    });
+  };
+
   const req = (user.friendRequests || []).length;
 
   return (
@@ -388,7 +407,7 @@ function Home({ user, db, nav, logout, notify, updateUser }) {
       )}
 
       {/* Puzzle tabs: My Puzzles / Friends' Puzzles */}
-      <div style={{ display: "flex", gap: 4, marginBottom: 14 }}>
+      <div style={{ display: "flex", gap: 4, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
         <button onClick={() => setPuzzleTab("mine")} style={{
           padding: "8px 16px", borderRadius: 8, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1,
           background: puzzleTab === "mine" ? "#F9DF6D" : "#1a1a1b",
@@ -399,12 +418,37 @@ function Home({ user, db, nav, logout, notify, updateUser }) {
           background: puzzleTab === "friends" ? "#97C1F7" : "#1a1a1b",
           color: puzzleTab === "friends" ? "#0a0a0b" : "#666",
         }}>Friends' Puzzles{friendsPuzzles.length > 0 ? ` (${friendsPuzzles.length})` : ""}</button>
+
+        {/* Current / Archived filter for My Puzzles */}
+        {puzzleTab === "mine" && (
+          <select
+            value={myFilter}
+            onChange={e => setMyFilter(e.target.value)}
+            style={{
+              marginLeft: "auto", padding: "6px 10px", borderRadius: 8, fontSize: 11, fontWeight: 600,
+              background: "#1a1a1b", color: "#888", border: "1px solid #2a2a2a", outline: "none",
+              cursor: "pointer", fontFamily: "inherit",
+            }}
+          >
+            <option value="current">Current ({currentPuzzles.length})</option>
+            <option value="archived">Archived ({archivedPuzzles.length})</option>
+          </select>
+        )}
       </div>
 
       {puzzleTab === "mine" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 28 }}>
-          {allPuzzles.length === 0 ? <p style={{ color: "#555", fontSize: 13, padding: "16px 0" }}>No puzzles yet — create your first one above!</p>
-            : allPuzzles.map(p => <PCard key={p.id} p={p} res={user.results} onPlay={() => nav("play", null, p)} onDel={() => del(p.id)} owner />)}
+          {shownPuzzles.length === 0
+            ? <p style={{ color: "#555", fontSize: 13, padding: "16px 0" }}>
+                {myFilter === "current" ? "No current puzzles — create one above or unarchive an older one!" : "No archived puzzles."}
+              </p>
+            : shownPuzzles.map(p => (
+                <PCard key={p.id} p={p} res={user.results} onPlay={() => nav("play", null, p)}
+                  onDel={() => setConfirmDelete(p.id)}
+                  onArchive={() => toggleArchive(p.id)}
+                  archived={p.archived}
+                  owner />
+              ))}
         </div>
       )}
 
@@ -412,6 +456,20 @@ function Home({ user, db, nav, logout, notify, updateUser }) {
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 28 }}>
           {friendsPuzzles.length === 0 ? <p style={{ color: "#555", fontSize: 13, padding: "16px 0" }}>No friends' puzzles yet — add friends to see their creations!</p>
             : friendsPuzzles.map(p => <PCard key={p.id} p={p} sub={`by ${p.creatorName}`} res={user.results} onPlay={() => nav("play", null, p)} />)}
+        </div>
+      )}
+
+      {/* Delete confirmation modal */}
+      {confirmDelete && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={() => setConfirmDelete(null)}>
+          <div onClick={e => e.stopPropagation()} style={{ background: "#141415", borderRadius: 16, padding: 28, maxWidth: 340, width: "100%", border: "1px solid #2a2a2a", textAlign: "center", animation: "fadeUp .2s ease" }}>
+            <p style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>Delete puzzle?</p>
+            <p style={{ fontSize: 13, color: "#666", marginBottom: 24 }}>This can't be undone.</p>
+            <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+              <button onClick={() => setConfirmDelete(null)} style={{ padding: "10px 24px", borderRadius: 8, background: "#1e1e1e", color: "#888", fontSize: 13, fontWeight: 600 }}>Cancel</button>
+              <button onClick={() => del(confirmDelete)} style={{ padding: "10px 24px", borderRadius: 8, background: "#e74c3c", color: "#fff", fontSize: 13, fontWeight: 700 }}>Delete</button>
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -425,7 +483,7 @@ const Sec = ({ title, color, children }) => (
   </div>
 );
 
-const PCard = ({ p, sub, res, onPlay, onDel, owner }) => {
+const PCard = ({ p, sub, res, onPlay, onDel, onArchive, archived, owner }) => {
   const r = res?.[p.id]; const g = GAME_TYPES[p.type];
   return (
     <div style={{ background: "#141415", borderRadius: 12, padding: "14px 16px", border: "1px solid #1e1e1e", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
@@ -439,8 +497,9 @@ const PCard = ({ p, sub, res, onPlay, onDel, owner }) => {
           {r && <span style={{ marginLeft: 6, color: r.solved ? "#6AAA64" : "#e74c3c" }}>{r.solved ? `✓ (${r.mistakes}m)` : "✗"}</span>}
         </p>
       </div>
-      <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+      <div style={{ display: "flex", gap: 6, flexShrink: 0, alignItems: "center" }}>
         <button onClick={onPlay} style={{ padding: "7px 16px", borderRadius: 7, fontSize: 12, fontWeight: 600, background: r ? "#1e1e1e" : g?.color || "#F9DF6D", color: r ? (g?.color || "#F9DF6D") : "#0a0a0b" }}>{r ? "Replay" : "Play"}</button>
+        {owner && onArchive && <button onClick={onArchive} title={archived ? "Unarchive" : "Archive"} style={{ padding: "7px 10px", borderRadius: 7, fontSize: 12, background: "#1a1a1b", color: archived ? "#6AAA64" : "#555" }}>{archived ? "↑" : "↓"}</button>}
         {owner && onDel && <button onClick={onDel} style={{ padding: "7px 10px", borderRadius: 7, fontSize: 12, background: "#1a1a1b", color: "#555" }}>✕</button>}
       </div>
     </div>
@@ -462,7 +521,7 @@ function Creator({ user, db, gameType, onBack, notify, updateUser }) {
 function savePuzzle(user, updateUser, notify, type, title, data, shareWith, onBack) {
   if (!title.trim()) { notify("Give your puzzle a title", "error"); return; }
   const id = uid();
-  const puzzle = { id, type, title: title.trim(), creator: user.username, creatorName: user.displayName, data, createdAt: Date.now() };
+  const puzzle = { id, type, title: title.trim(), creator: user.username, creatorName: user.displayName, data, createdAt: Date.now(), archived: false };
   
   // Save locally
   updateUser(user.username, u => { u.puzzles = [...u.puzzles, puzzle]; return u; });

@@ -11,3 +11,11 @@
 6. In strands, there needs to be only one possible solution, otherwise the user could get the correct answer but it not be the configuration that was selected.
 
 7. Once friends are added and accepted. They should appear and stay in the other users friend page. Also any puzzles they have created should appear under "Friend's Puzzles" which should be an option next to "My Puzzles" on homepage.
+
+8. I like the idea of there being a distinction between archived puzzles and "up-to-date" or "today's" ones. Perhaps a user can label their puzzles as most recent or archive. It is only the most recent ones that appear on friends' puzzles. The archived ones only appear on "my puzzles". Perhaps there should be a drop down menu on "my puzzles" for archived or current and then only current appear on friends' puzzles.
+
+9. Add a "are you sure you want to delete" button when deleting the puzzles. It is too easy to do accidentally at the moment.
+
+10. Strands often can't make the words fit on the board due to letter configuration. How can this be improved?
+
+11. The leaderboard needs to function properly. Counting the number of wins (complete puzzles), number of losses (incomplete puzzles), average lives lost in each game (e.g. guesses in wordle, hints in strands, lives in connections). Then rank you and your friends on the leaderboard. This should keep the figures even if the related puzzles are later archived.
