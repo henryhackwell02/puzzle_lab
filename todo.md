@@ -9,3 +9,5 @@
 5. Friends should be add-able by the email that they signed up with. Once a user enters their email they can share puzzles that they make with their friends and appear on each other's leaderboards.
 
 6. In strands, there needs to be only one possible solution, otherwise the user could get the correct answer but it not be the configuration that was selected.
+
+7. Once friends are added and accepted. They should appear and stay in the other users friend page. Also any puzzles they have created should appear under "Friend's Puzzles" which should be an option next to "My Puzzles" on homepage.

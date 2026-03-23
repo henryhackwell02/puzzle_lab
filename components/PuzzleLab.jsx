@@ -9,7 +9,7 @@ import {
   getFriendRequests, acceptFriendRequest as sbAcceptFriendRequest,
   declineFriendRequest as sbDeclineFriendRequest, getFriends,
   removeFriend as sbRemoveFriend, saveResult as sbSaveResult,
-  getMyResults, getLeaderboardStats
+  getMyResults, getLeaderboardStats, getFriendsPuzzles
 } from "@/lib/supabase";
 
 /* ═══════════════════════════════════════════════════
@@ -90,6 +90,12 @@ async function loadUserFromSupabase(authUser) {
     getMyResults(authUser.id),
   ]);
 
+  const friends = friendsData.map(f => ({ username: f.friend?.email, displayName: f.friend?.display_name, id: f.friend?.id })).filter(f => f.username);
+
+  // Fetch friends' puzzles
+  const friendIds = friends.map(f => f.id).filter(Boolean);
+  const friendsPuzzlesData = friendIds.length > 0 ? await getFriendsPuzzles(friendIds) : [];
+
   // Build shared puzzle list from joined data
   const sharedPuzzlesList = sharedData
     .filter(s => s.puzzles)
@@ -104,11 +110,16 @@ async function loadUserFromSupabase(authUser) {
     username,
     supaId: authUser.id,
     displayName: profile.display_name || username,
-    friends: friendsData.map(f => ({ username: f.friend?.email, displayName: f.friend?.display_name, id: f.friend?.id })).filter(f => f.username),
+    friends,
     friendRequests: requestsData.map(r => ({ from: r.from?.email, fromDisplay: r.from?.display_name, fromId: r.from?.id, requestId: r.id })),
     puzzles: puzzles.map(p => ({
       id: p.id, type: p.type, title: p.title, data: p.data,
       creator: username, creatorName: profile.display_name,
+      createdAt: new Date(p.created_at).getTime(),
+    })),
+    friendsPuzzles: friendsPuzzlesData.map(p => ({
+      id: p.id, type: p.type, title: p.title, data: p.data,
+      creator: p.profiles?.email || "Unknown", creatorName: p.profiles?.display_name || "Unknown",
       createdAt: new Date(p.created_at).getTime(),
     })),
     sharedPuzzles: sharedPuzzlesList,
@@ -308,12 +319,35 @@ function Auth({ onLogin, onRegister, isSupabase }) {
 }
 
 function Home({ user, db, nav, logout, notify, updateUser }) {
+  const [puzzleTab, setPuzzleTab] = useState("mine");
   const allPuzzles = [...(user.puzzles || [])].sort((a, b) => b.createdAt - a.createdAt);
+
+  // Friends' puzzles — from Supabase data or local db
+  const friendsPuzzles = (() => {
+    if (user.friendsPuzzles && user.friendsPuzzles.length > 0) return user.friendsPuzzles;
+    // Local mode fallback: gather puzzles from friends in db
+    const fps = [];
+    for (const f of (user.friends || [])) {
+      const fKey = typeof f === "object" ? f.username : f;
+      const fDisplay = typeof f === "object" ? (f.displayName || f.username) : f;
+      const fData = db[fKey];
+      if (fData) {
+        for (const p of (fData.puzzles || [])) {
+          fps.push({ ...p, creatorName: fData.displayName || fDisplay });
+        }
+      }
+    }
+    return fps.sort((a, b) => b.createdAt - a.createdAt);
+  })();
+
   const shared = (user.sharedWithMe || []).map(ref => {
     const c = db[ref.from]; if (!c) return null;
     const p = (c.puzzles || []).find(x => x.id === ref.puzzleId);
     return p ? { ...p, sharedBy: ref.from, sharedByName: c.displayName } : null;
   }).filter(Boolean).sort((a, b) => b.createdAt - a.createdAt);
+  // Also include Supabase shared puzzles
+  const supaShared = (user.sharedPuzzles || []);
+  const allShared = [...shared, ...supaShared.filter(sp => !shared.some(s => s.id === sp.id))];
 
   const del = (id) => { updateUser(user.username, u => { u.puzzles = u.puzzles.filter(p => p.id !== id); delete u.results[id]; return u; }); notify("Deleted", "success"); };
   const req = (user.friendRequests || []).length;
@@ -347,17 +381,39 @@ function Home({ user, db, nav, logout, notify, updateUser }) {
       </div>
 
       {/* Shared */}
-      {shared.length > 0 && (
+      {allShared.length > 0 && (
         <Sec title="Shared With You" color="#6AAA64">
-          {shared.map(p => <PCard key={p.id + p.sharedBy} p={p} sub={`from ${p.sharedByName || p.sharedBy}`} res={user.results} onPlay={() => nav("play", null, p)} />)}
+          {allShared.map(p => <PCard key={p.id + (p.sharedBy || "")} p={p} sub={`from ${p.sharedByName || p.sharedBy || p.creatorName}`} res={user.results} onPlay={() => nav("play", null, p)} />)}
         </Sec>
       )}
 
-      {/* My puzzles */}
-      <Sec title="Your Puzzles" color="#F9DF6D">
-        {allPuzzles.length === 0 ? <p style={{ color: "#555", fontSize: 13, padding: "16px 0" }}>No puzzles yet — create your first one above!</p>
-          : allPuzzles.map(p => <PCard key={p.id} p={p} res={user.results} onPlay={() => nav("play", null, p)} onDel={() => del(p.id)} owner />)}
-      </Sec>
+      {/* Puzzle tabs: My Puzzles / Friends' Puzzles */}
+      <div style={{ display: "flex", gap: 4, marginBottom: 14 }}>
+        <button onClick={() => setPuzzleTab("mine")} style={{
+          padding: "8px 16px", borderRadius: 8, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1,
+          background: puzzleTab === "mine" ? "#F9DF6D" : "#1a1a1b",
+          color: puzzleTab === "mine" ? "#0a0a0b" : "#666",
+        }}>My Puzzles</button>
+        <button onClick={() => setPuzzleTab("friends")} style={{
+          padding: "8px 16px", borderRadius: 8, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1,
+          background: puzzleTab === "friends" ? "#97C1F7" : "#1a1a1b",
+          color: puzzleTab === "friends" ? "#0a0a0b" : "#666",
+        }}>Friends' Puzzles{friendsPuzzles.length > 0 ? ` (${friendsPuzzles.length})` : ""}</button>
+      </div>
+
+      {puzzleTab === "mine" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 28 }}>
+          {allPuzzles.length === 0 ? <p style={{ color: "#555", fontSize: 13, padding: "16px 0" }}>No puzzles yet — create your first one above!</p>
+            : allPuzzles.map(p => <PCard key={p.id} p={p} res={user.results} onPlay={() => nav("play", null, p)} onDel={() => del(p.id)} owner />)}
+        </div>
+      )}
+
+      {puzzleTab === "friends" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 28 }}>
+          {friendsPuzzles.length === 0 ? <p style={{ color: "#555", fontSize: 13, padding: "16px 0" }}>No friends' puzzles yet — add friends to see their creations!</p>
+            : friendsPuzzles.map(p => <PCard key={p.id} p={p} sub={`by ${p.creatorName}`} res={user.results} onPlay={() => nav("play", null, p)} />)}
+        </div>
+      )}
     </div>
   );
 }
