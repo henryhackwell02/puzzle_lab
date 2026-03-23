@@ -7,3 +7,5 @@
 4. The visual optimisation goes beyond point 3. Please ensure all the website is optimised for both phone and desktop.
 
 5. Friends should be add-able by the email that they signed up with. Once a user enters their email they can share puzzles that they make with their friends and appear on each other's leaderboards.
+
+6. In strands, there needs to be only one possible solution, otherwise the user could get the correct answer but it not be the configuration that was selected.

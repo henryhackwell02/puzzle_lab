@@ -419,11 +419,16 @@ function savePuzzle(user, updateUser, notify, type, title, data, shareWith, onBa
     (async () => {
       const sbPuzzle = await sbCreatePuzzle(user.supaId, { type, title: title.trim(), data });
       if (sbPuzzle) {
-        // Share with friends in Supabase
         for (const f of shareWith) {
-          // f might be a username/email or an object with id
           const friendId = typeof f === "object" ? f.id : null;
-          if (friendId) await sbSharePuzzle(sbPuzzle.id, user.supaId, friendId);
+          const friendEmail = typeof f === "object" ? f.username : f;
+          if (friendId) {
+            await sbSharePuzzle(sbPuzzle.id, user.supaId, friendId);
+          } else if (friendEmail) {
+            // Look up friend ID by email from user's friends list
+            const friendObj = (user.friends || []).find(fr => (typeof fr === "object" ? fr.username : fr) === friendEmail);
+            if (friendObj?.id) await sbSharePuzzle(sbPuzzle.id, user.supaId, friendObj.id);
+          }
         }
       }
     })();
@@ -435,11 +440,15 @@ function savePuzzle(user, updateUser, notify, type, title, data, shareWith, onBa
 
 function SharePicker({ friends, shareWith, setShareWith }) {
   if (friends.length === 0) return null;
+  const getKey = (f) => typeof f === "object" ? (f.id || f.username) : f;
+  const getDisplay = (f) => typeof f === "object" ? (f.displayName || f.username) : f;
+  const isSelected = (f) => shareWith.some(s => getKey(s) === getKey(f));
+  const toggle = (f) => setShareWith(p => isSelected(f) ? p.filter(s => getKey(s) !== getKey(f)) : [...p, f]);
   return (
     <div style={{ background: "#141415", borderRadius: 14, padding: 16, marginBottom: 20, border: "1px solid #1e1e1e" }}>
       <p style={{ fontSize: 12, fontWeight: 600, color: "#97C1F7", marginBottom: 10 }}>Share with friends</p>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-        {friends.map(f => <button key={f} onClick={() => setShareWith(p => p.includes(f) ? p.filter(x => x !== f) : [...p, f])} style={{ padding: "6px 12px", borderRadius: 16, fontSize: 12, fontWeight: 600, background: shareWith.includes(f) ? "#97C1F7" : "#1e1e1e", color: shareWith.includes(f) ? "#0a0a0b" : "#666" }}>{f}</button>)}
+        {friends.map(f => <button key={getKey(f)} onClick={() => toggle(f)} style={{ padding: "6px 12px", borderRadius: 16, fontSize: 12, fontWeight: 600, background: isSelected(f) ? "#97C1F7" : "#1e1e1e", color: isSelected(f) ? "#0a0a0b" : "#666" }}>{getDisplay(f)}</button>)}
       </div>
     </div>
   );
@@ -658,13 +667,71 @@ function generateStrandsGrid(allWords) {
     return placeWord(wi, 0, []);
   }
 
-  for (let attempt = 0; attempt < 30; attempt++) {
+  // Verify each word has exactly one path in the grid (no alternate solutions)
+  function hasUniquePlacements(finalPlacements) {
+    for (const word of allWords) {
+      const pathCount = countWordPaths(word, finalPlacements[word]);
+      if (pathCount > 1) return false;
+    }
+    return true;
+  }
+
+  // Count how many distinct adjacent paths spell `word` in the grid
+  function countWordPaths(word, intendedPath) {
+    const intendedSet = new Set(intendedPath.map(([r, c]) => `${r},${c}`));
+    let count = 0;
+    const maxCount = 2; // We only need to know if > 1
+
+    function dfs(ci, path, visited) {
+      if (count >= maxCount) return;
+      if (ci === word.length) {
+        count++;
+        return;
+      }
+      if (ci === 0) {
+        // Try every starting cell
+        for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+          if (grid[r][c] === word[0]) {
+            visited.add(`${r},${c}`);
+            path.push([r, c]);
+            dfs(1, path, visited);
+            path.pop();
+            visited.delete(`${r},${c}`);
+            if (count >= maxCount) return;
+          }
+        }
+      } else {
+        const [pr, pc] = path[path.length - 1];
+        for (const [dr, dc] of dirs) {
+          const nr = pr + dr, nc = pc + dc;
+          if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) continue;
+          const k = `${nr},${nc}`;
+          if (visited.has(k)) continue;
+          if (grid[nr][nc] !== word[ci]) continue;
+          visited.add(k);
+          path.push([nr, nc]);
+          dfs(ci + 1, path, visited);
+          path.pop();
+          visited.delete(k);
+          if (count >= maxCount) return;
+        }
+      }
+    }
+
+    dfs(0, [], new Set());
+    return count;
+  }
+
+  for (let attempt = 0; attempt < 40; attempt++) {
     for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) { grid[r][c] = null; owner[r][c] = -1; }
     Object.keys(placements).forEach(k => delete placements[k]);
     if (tryNextWord(0)) {
       const finalPlacements = {};
       for (const w of allWords) finalPlacements[w] = placements[w];
-      return { grid, rows, cols, placements: finalPlacements };
+      // Reject grids where any word can be traced through a different path
+      if (hasUniquePlacements(finalPlacements)) {
+        return { grid, rows, cols, placements: finalPlacements };
+      }
     }
   }
   return null;
@@ -1608,14 +1675,43 @@ function PlayThreads({ user, puzzle, onBack, notify, updateUser }) {
 }
 
 // ═══ FRIENDS ═══
-function Friends({ user, db, onBack, updateUser, notify }) {
+function Friends({ user, db, onBack, updateUser, notify, supaUser, reloadUser }) {
   const [fi, setFi] = useState("");
-  const send = () => {
-    const t = fi.toLowerCase().trim(); if (!t) return;
-    if (t === user.username) return notify("That's you!", "error");
-    if ((user.friends || []).includes(t)) return notify("Already friends", "error");
-    if (!db[t]) return notify("User not found", "error");
-    if ((db[t].friendRequests || []).some(r => r.from === user.username)) return notify("Already sent", "error");
+  const [searchResults, setSearchResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  // Get friend identifier for comparison
+  const getFriendKey = (f) => typeof f === "object" ? (f.username || f.id) : f;
+  const getFriendDisplay = (f) => typeof f === "object" ? (f.displayName || f.username) : f;
+  const getFriendId = (f) => typeof f === "object" ? f.id : null;
+  const friendKeys = (user.friends || []).map(getFriendKey);
+
+  const search = async () => {
+    const q = fi.trim();
+    if (!q) return;
+    if (SB && supaUser) {
+      setSearching(true);
+      const results = await searchProfiles(q);
+      // Filter out self and existing friends
+      const filtered = results.filter(r =>
+        r.id !== supaUser.id && !friendKeys.includes(r.email)
+      );
+      setSearchResults(filtered);
+      setSearching(false);
+      if (filtered.length === 0) notify("No users found", "info");
+    } else {
+      // Local mode — direct lookup
+      const t = q.toLowerCase();
+      if (t === user.username) return notify("That's you!", "error");
+      if (friendKeys.includes(t)) return notify("Already friends", "error");
+      if (!db[t]) return notify("User not found", "error");
+      sendLocal(t);
+    }
+  };
+
+  const sendLocal = (t) => {
+    if ((db[t]?.friendRequests || []).some(r => r.from === user.username)) return notify("Already sent", "error");
     if ((user.friendRequests || []).some(r => r.from === t)) {
       updateUser(user.username, u => { u.friends = [...new Set([...u.friends, t])]; u.friendRequests = u.friendRequests.filter(r => r.from !== t); return u; });
       updateUser(t, u => { u.friends = [...new Set([...u.friends, user.username])]; return u; });
@@ -1624,74 +1720,210 @@ function Friends({ user, db, onBack, updateUser, notify }) {
     updateUser(t, u => { u.friendRequests = [...u.friendRequests, { from: user.username, sentAt: Date.now() }]; return u; });
     notify(`Request sent to ${t}`, "success"); setFi("");
   };
-  const accept = f => {
-    updateUser(user.username, u => { u.friends = [...new Set([...u.friends, f])]; u.friendRequests = u.friendRequests.filter(r => r.from !== f); return u; });
-    updateUser(f, u => { u.friends = [...new Set([...u.friends, user.username])]; return u; });
-    notify(`Now friends with ${f}!`, "success");
+
+  const sendRequest = async (profile) => {
+    if (!SB || !supaUser) return;
+    setBusy(true);
+    const ok = await sbSendFriendRequest(supaUser.id, profile.id);
+    if (ok) {
+      notify(`Request sent to ${profile.display_name || profile.email}!`, "success");
+      setSearchResults(prev => prev.filter(r => r.id !== profile.id));
+      setFi("");
+    } else {
+      notify("Failed to send request", "error");
+    }
+    setBusy(false);
   };
-  const decline = f => updateUser(user.username, u => { u.friendRequests = u.friendRequests.filter(r => r.from !== f); return u; });
-  const remove = f => {
-    updateUser(user.username, u => { u.friends = u.friends.filter(x => x !== f); return u; });
-    updateUser(f, u => { u.friends = u.friends.filter(x => x !== user.username); return u; });
-    notify("Removed", "info");
+
+  const accept = async (req) => {
+    if (SB && supaUser) {
+      setBusy(true);
+      await sbAcceptFriendRequest(req.requestId, req.fromId, supaUser.id);
+      await reloadUser();
+      notify(`Now friends with ${req.fromDisplay || req.from}!`, "success");
+      setBusy(false);
+    } else {
+      updateUser(user.username, u => { u.friends = [...new Set([...u.friends, req.from])]; u.friendRequests = u.friendRequests.filter(r => r.from !== req.from); return u; });
+      updateUser(req.from, u => { u.friends = [...new Set([...u.friends, user.username])]; return u; });
+      notify(`Now friends with ${req.from}!`, "success");
+    }
+  };
+
+  const decline = async (req) => {
+    if (SB && supaUser) {
+      setBusy(true);
+      await sbDeclineFriendRequest(req.requestId);
+      await reloadUser();
+      setBusy(false);
+    } else {
+      updateUser(user.username, u => { u.friendRequests = u.friendRequests.filter(r => r.from !== req.from); return u; });
+    }
+  };
+
+  const remove = async (f) => {
+    if (SB && supaUser) {
+      const fId = getFriendId(f);
+      if (!fId) return;
+      setBusy(true);
+      await sbRemoveFriend(supaUser.id, fId);
+      await reloadUser();
+      notify("Removed", "info");
+      setBusy(false);
+    } else {
+      const fKey = getFriendKey(f);
+      updateUser(user.username, u => { u.friends = u.friends.filter(x => getFriendKey(x) !== fKey); return u; });
+      updateUser(fKey, u => { u.friends = u.friends.filter(x => x !== user.username); return u; });
+      notify("Removed", "info");
+    }
   };
 
   return (
     <div style={{ maxWidth: 480, margin: "0 auto", padding: "24px 20px", animation: "fadeUp .4s ease" }}>
       <BackBtn onClick={onBack} />
       <Title color="#97C1F7">Friends</Title>
-      <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
-        <input placeholder="Username..." value={fi} onChange={e => setFi(e.target.value)} onKeyDown={e => e.key === "Enter" && send()} style={{ ...inp, flex: 1 }} />
-        <button onClick={send} style={{ padding: "10px 18px", borderRadius: 9, background: "#97C1F7", color: "#0a0a0b", fontWeight: 700, fontSize: 13, flexShrink: 0 }}>Add</button>
+      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+        <input placeholder={SB ? "Search by email..." : "Username..."} value={fi} onChange={e => { setFi(e.target.value); setSearchResults([]); }} onKeyDown={e => e.key === "Enter" && search()} style={{ ...inp, flex: 1 }} />
+        <button onClick={search} disabled={busy || searching} style={{ padding: "10px 18px", borderRadius: 9, background: "#97C1F7", color: "#0a0a0b", fontWeight: 700, fontSize: 13, flexShrink: 0, opacity: (busy || searching) ? 0.5 : 1 }}>{searching ? "..." : SB ? "Search" : "Add"}</button>
       </div>
+
+      {/* Search results (Supabase mode) */}
+      {searchResults.length > 0 && (
+        <div style={{ marginBottom: 24 }}>
+          <p style={{ fontSize: 11, fontWeight: 700, color: "#97C1F7", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Results</p>
+          {searchResults.map(r => (
+            <div key={r.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#141415", borderRadius: 10, padding: "10px 14px", marginBottom: 6, border: "1px solid #97C1F722" }}>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <p style={{ fontWeight: 600, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.display_name || r.email}</p>
+                {r.display_name && <p style={{ fontSize: 11, color: "#555", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.email}</p>}
+              </div>
+              <button onClick={() => sendRequest(r)} disabled={busy} style={{ padding: "5px 12px", borderRadius: 6, background: "#97C1F7", color: "#0a0a0b", fontSize: 11, fontWeight: 700, flexShrink: 0, marginLeft: 8 }}>Add</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Friend requests */}
       {(user.friendRequests || []).length > 0 && (
         <div style={{ marginBottom: 24 }}>
           <p style={{ fontSize: 11, fontWeight: 700, color: "#F9DF6D", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Requests</p>
           {user.friendRequests.map(r => (
-            <div key={r.from} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#141415", borderRadius: 10, padding: "10px 14px", marginBottom: 6, border: "1px solid #F9DF6D22" }}>
-              <span style={{ fontWeight: 600, fontSize: 13 }}>{r.from}</span>
-              <div style={{ display: "flex", gap: 6 }}>
-                <button onClick={() => accept(r.from)} style={{ padding: "5px 12px", borderRadius: 6, background: "#6AAA64", color: "#fff", fontSize: 11, fontWeight: 700 }}>Accept</button>
-                <button onClick={() => decline(r.from)} style={{ padding: "5px 12px", borderRadius: 6, background: "#2a2a2a", color: "#666", fontSize: 11, fontWeight: 700 }}>Decline</button>
+            <div key={r.requestId || r.from} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#141415", borderRadius: 10, padding: "10px 14px", marginBottom: 6, border: "1px solid #F9DF6D22" }}>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <p style={{ fontWeight: 600, fontSize: 13 }}>{r.fromDisplay || r.from}</p>
+                {r.fromDisplay && r.from && r.fromDisplay !== r.from && <p style={{ fontSize: 11, color: "#555" }}>{r.from}</p>}
+              </div>
+              <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                <button onClick={() => accept(r)} disabled={busy} style={{ padding: "5px 12px", borderRadius: 6, background: "#6AAA64", color: "#fff", fontSize: 11, fontWeight: 700 }}>Accept</button>
+                <button onClick={() => decline(r)} disabled={busy} style={{ padding: "5px 12px", borderRadius: 6, background: "#2a2a2a", color: "#666", fontSize: 11, fontWeight: 700 }}>Decline</button>
               </div>
             </div>
           ))}
         </div>
       )}
+
+      {/* Friends list */}
       <p style={{ fontSize: 11, fontWeight: 700, color: "#555", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Friends ({(user.friends || []).length})</p>
-      {(user.friends || []).length === 0 ? <p style={{ color: "#444", fontSize: 13 }}>No friends yet</p>
-        : user.friends.map(f => (
-          <div key={f} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#141415", borderRadius: 10, padding: "10px 14px", marginBottom: 6, border: "1px solid #1e1e1e" }}>
-            <span style={{ fontWeight: 600, fontSize: 13 }}>{f}</span>
-            <button onClick={() => remove(f)} style={{ padding: "5px 10px", borderRadius: 6, background: "#1e1e1e", color: "#555", fontSize: 11, fontWeight: 600 }}>Remove</button>
-          </div>
-        ))}
+      {(user.friends || []).length === 0 ? <p style={{ color: "#444", fontSize: 13 }}>No friends yet — search by email to add friends!</p>
+        : user.friends.map(f => {
+          const key = getFriendKey(f);
+          const display = getFriendDisplay(f);
+          const email = typeof f === "object" ? f.username : null;
+          return (
+            <div key={key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#141415", borderRadius: 10, padding: "10px 14px", marginBottom: 6, border: "1px solid #1e1e1e" }}>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <p style={{ fontWeight: 600, fontSize: 13 }}>{display}</p>
+                {email && display !== email && <p style={{ fontSize: 11, color: "#555", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{email}</p>}
+              </div>
+              <button onClick={() => remove(f)} disabled={busy} style={{ padding: "5px 10px", borderRadius: 6, background: "#1e1e1e", color: "#555", fontSize: 11, fontWeight: 600, flexShrink: 0 }}>Remove</button>
+            </div>
+          );
+        })}
     </div>
   );
 }
 
 // ═══ LEADERBOARD ═══
-function Leaderboard({ user, db, onBack }) {
-  const players = [user.username, ...(user.friends || [])];
-  const stats = players.map(p => {
-    const d = db[p]; if (!d) return null;
-    const res = d.results || {};
-    let played = 0, wins = 0, tm = 0, perf = 0;
-    for (const r of Object.values(res)) { played++; if (r.solved) { wins++; tm += r.mistakes; if (r.mistakes === 0) perf++; } }
-    return { username: p, displayName: d.displayName, played, wins, perf, avgM: wins ? (tm / wins).toFixed(1) : "-", wr: played ? Math.round(wins / played * 100) : 0 };
-  }).filter(Boolean).sort((a, b) => b.wins !== a.wins ? b.wins - a.wins : b.perf - a.perf);
+function Leaderboard({ user, db, onBack, supaUser }) {
+  const [lbStats, setLbStats] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      if (SB && supaUser) {
+        // Supabase mode: fetch stats for self + friends
+        const friendIds = (user.friends || []).map(f => typeof f === "object" ? f.id : null).filter(Boolean);
+        const allIds = [supaUser.id, ...friendIds];
+        const allResults = await getLeaderboardStats(allIds);
+
+        // Group results by user_id
+        const byUser = {};
+        for (const r of allResults) {
+          if (!byUser[r.user_id]) byUser[r.user_id] = [];
+          byUser[r.user_id].push(r);
+        }
+
+        // Build stats for each player
+        const entries = [];
+        // Self
+        const selfResults = byUser[supaUser.id] || [];
+        let played = 0, wins = 0, tm = 0, perf = 0;
+        for (const r of selfResults) { played++; if (r.solved) { wins++; tm += r.mistakes; if (r.mistakes === 0) perf++; } }
+        // Also count local results not yet synced
+        const localRes = user.results || {};
+        for (const r of Object.values(localRes)) {
+          if (!selfResults.some(sr => sr.puzzle_id === r.puzzle_id)) {
+            played++; if (r.solved) { wins++; tm += r.mistakes; if (r.mistakes === 0) perf++; }
+          }
+        }
+        entries.push({ key: supaUser.id, displayName: user.displayName, isSelf: true, played, wins, perf, avgM: wins ? (tm / wins).toFixed(1) : "-", wr: played ? Math.round(wins / played * 100) : 0 });
+
+        // Friends
+        for (const f of (user.friends || [])) {
+          const fId = typeof f === "object" ? f.id : null;
+          const fDisplay = typeof f === "object" ? (f.displayName || f.username) : f;
+          if (!fId) {
+            // Local mode friend — try db lookup
+            const d = db[f]; if (!d) continue;
+            const res = d.results || {};
+            let p2 = 0, w2 = 0, t2 = 0, pf2 = 0;
+            for (const r of Object.values(res)) { p2++; if (r.solved) { w2++; t2 += r.mistakes; if (r.mistakes === 0) pf2++; } }
+            entries.push({ key: f, displayName: d.displayName, isSelf: false, played: p2, wins: w2, perf: pf2, avgM: w2 ? (t2 / w2).toFixed(1) : "-", wr: p2 ? Math.round(w2 / p2 * 100) : 0 });
+            continue;
+          }
+          const fResults = byUser[fId] || [];
+          let p2 = 0, w2 = 0, t2 = 0, pf2 = 0;
+          for (const r of fResults) { p2++; if (r.solved) { w2++; t2 += r.mistakes; if (r.mistakes === 0) pf2++; } }
+          entries.push({ key: fId, displayName: fDisplay, isSelf: false, played: p2, wins: w2, perf: pf2, avgM: w2 ? (t2 / w2).toFixed(1) : "-", wr: p2 ? Math.round(w2 / p2 * 100) : 0 });
+        }
+        setLbStats(entries.sort((a, b) => b.wins !== a.wins ? b.wins - a.wins : b.perf - a.perf));
+      } else {
+        // Local mode
+        const players = [user.username, ...(user.friends || [])];
+        const entries = players.map(p => {
+          const d = db[p]; if (!d) return null;
+          const res = d.results || {};
+          let played = 0, wins = 0, tm = 0, perf = 0;
+          for (const r of Object.values(res)) { played++; if (r.solved) { wins++; tm += r.mistakes; if (r.mistakes === 0) perf++; } }
+          return { key: p, displayName: d.displayName, isSelf: p === user.username, played, wins, perf, avgM: wins ? (tm / wins).toFixed(1) : "-", wr: played ? Math.round(wins / played * 100) : 0 };
+        }).filter(Boolean).sort((a, b) => b.wins !== a.wins ? b.wins - a.wins : b.perf - a.perf);
+        setLbStats(entries);
+      }
+      setLoading(false);
+    })();
+  }, [user, db, supaUser]);
 
   return (
     <div style={{ maxWidth: 520, margin: "0 auto", padding: "24px 20px", animation: "fadeUp .4s ease" }}>
       <BackBtn onClick={onBack} />
       <Title color="#C4A0E8">Leaderboard</Title>
-      {stats.length === 0 ? <p style={{ color: "#555", fontSize: 13 }}>No data yet</p> : (
+      {loading ? <p style={{ color: "#555", fontSize: 13 }}>Loading...</p>
+        : lbStats.length === 0 ? <p style={{ color: "#555", fontSize: 13 }}>No data yet</p> : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {stats.map((d, i) => (
-            <div key={d.username} style={{ background: "#141415", borderRadius: 12, padding: "14px 16px", border: i === 0 ? "1px solid #F9DF6D33" : "1px solid #1e1e1e", display: "flex", alignItems: "center", gap: 14 }}>
+          {lbStats.map((d, i) => (
+            <div key={d.key} style={{ background: "#141415", borderRadius: 12, padding: "14px 16px", border: i === 0 ? "1px solid #F9DF6D33" : "1px solid #1e1e1e", display: "flex", alignItems: "center", gap: 14 }}>
               <div style={{ width: 32, height: 32, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", background: i === 0 ? "#F9DF6D" : i === 1 ? "#999" : i === 2 ? "#cd7f32" : "#2a2a2a", color: i < 3 ? "#0a0a0b" : "#666", fontWeight: 800, fontSize: 14, flexShrink: 0 }}>{i + 1}</div>
               <div style={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
-                <p style={{ fontWeight: 700, fontSize: 14, color: d.username === user.username ? "#F9DF6D" : "#e8e8e8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.displayName}{d.username === user.username && <span style={{ fontSize: 10, color: "#666", marginLeft: 6 }}>(you)</span>}</p>
+                <p style={{ fontWeight: 700, fontSize: 14, color: d.isSelf ? "#F9DF6D" : "#e8e8e8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.displayName}{d.isSelf && <span style={{ fontSize: 10, color: "#666", marginLeft: 6 }}>(you)</span>}</p>
                 <p style={{ color: "#555", fontSize: 11, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.wins}W / {d.played}P · {d.wr}% · {d.perf} perfect · avg {d.avgM}m</p>
               </div>
             </div>
