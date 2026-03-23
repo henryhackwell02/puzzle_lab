@@ -530,12 +530,14 @@ const Sec = ({ title, color, children }) => (
 const PCard = ({ p, sub, res, onPlay, onEdit, onDel, onArchive, onShare, archived, owner }) => {
   const r = res?.[p.id]; const g = GAME_TYPES[p.type];
   const isShared = (p.sharedWith || []).length > 0;
+  const isDraft = p.draft;
   return (
-    <div style={{ background: "#141415", borderRadius: 12, padding: "14px 16px", border: "1px solid #1e1e1e", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+    <div style={{ background: isDraft ? "#111112" : "#141415", borderRadius: 12, padding: "14px 16px", border: isDraft ? "1px dashed #333" : "1px solid #1e1e1e", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, opacity: isDraft ? 0.6 : 1 }}>
       <div style={{ minWidth: 0, flex: 1 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
           <span style={{ fontSize: 14, color: g?.color || "#888" }}>{g?.icon}</span>
-          <span style={{ fontWeight: 600, fontSize: 14, color: "#e8e8e8" }}>{p.title}</span>
+          <span style={{ fontWeight: 600, fontSize: 14, color: isDraft ? "#888" : "#e8e8e8" }}>{p.title}</span>
+          {isDraft && <span style={{ fontSize: 9, fontWeight: 700, color: "#F9DF6D", background: "#F9DF6D22", padding: "2px 6px", borderRadius: 4, textTransform: "uppercase", letterSpacing: 1 }}>Draft</span>}
         </div>
         <p style={{ color: "#555", fontSize: 11 }}>
           {g?.name}{sub ? ` · ${sub}` : ""}
@@ -543,9 +545,12 @@ const PCard = ({ p, sub, res, onPlay, onEdit, onDel, onArchive, onShare, archive
         </p>
       </div>
       <div style={{ display: "flex", gap: 6, flexShrink: 0, alignItems: "center" }}>
-        <button onClick={onPlay} style={{ padding: "7px 16px", borderRadius: 7, fontSize: 12, fontWeight: 600, background: r ? "#1e1e1e" : g?.color || "#F9DF6D", color: r ? (g?.color || "#F9DF6D") : "#0a0a0b" }}>{r ? "Replay" : "Play"}</button>
-        {owner && onEdit && <button onClick={onEdit} title="Edit puzzle" style={{ padding: "7px 10px", borderRadius: 7, fontSize: 12, background: "#1a1a1b", color: "#F9DF6D" }}>✎</button>}
-        {owner && onShare && (
+        {isDraft
+          ? <button onClick={onEdit} style={{ padding: "7px 16px", borderRadius: 7, fontSize: 12, fontWeight: 600, background: "#F9DF6D", color: "#0a0a0b" }}>Continue</button>
+          : <button onClick={onPlay} style={{ padding: "7px 16px", borderRadius: 7, fontSize: 12, fontWeight: 600, background: r ? "#1e1e1e" : g?.color || "#F9DF6D", color: r ? (g?.color || "#F9DF6D") : "#0a0a0b" }}>{r ? "Replay" : "Play"}</button>
+        }
+        {owner && !isDraft && onEdit && <button onClick={onEdit} title="Edit puzzle" style={{ padding: "7px 10px", borderRadius: 7, fontSize: 12, background: "#1a1a1b", color: "#F9DF6D" }}>✎</button>}
+        {owner && !isDraft && onShare && (
           <button onClick={onShare} title={isShared ? "Shared — click to manage" : "Private — click to share"} style={{
             padding: "5px 10px", borderRadius: 7, fontSize: 10, fontWeight: 700,
             background: isShared ? "#97C1F722" : "#1a1a1b",
@@ -553,7 +558,7 @@ const PCard = ({ p, sub, res, onPlay, onEdit, onDel, onArchive, onShare, archive
             border: isShared ? "1px solid #97C1F744" : "1px solid transparent",
           }}>{isShared ? "Shared" : "Private"}</button>
         )}
-        {owner && onArchive && <button onClick={onArchive} title={archived ? "Unarchive" : "Archive"} style={{ padding: "7px 10px", borderRadius: 7, fontSize: 12, background: "#1a1a1b", color: archived ? "#6AAA64" : "#555" }}>{archived ? "↑" : "↓"}</button>}
+        {owner && !isDraft && onArchive && <button onClick={onArchive} title={archived ? "Unarchive" : "Archive"} style={{ padding: "7px 10px", borderRadius: 7, fontSize: 12, background: "#1a1a1b", color: archived ? "#6AAA64" : "#555" }}>{archived ? "↑" : "↓"}</button>}
         {owner && onDel && <button onClick={onDel} style={{ padding: "7px 10px", borderRadius: 7, fontSize: 12, background: "#1a1a1b", color: "#555" }}>✕</button>}
       </div>
     </div>
@@ -670,13 +675,38 @@ function savePuzzle(user, updateUser, notify, type, title, data, shareWith, onBa
 function updateExistingPuzzle(user, updateUser, notify, puzzleId, title, data, onBack) {
   if (!title.trim()) { notify("Give your puzzle a title", "error"); return; }
   updateUser(user.username, u => {
-    u.puzzles = u.puzzles.map(p => p.id === puzzleId ? { ...p, title: title.trim(), data } : p);
+    u.puzzles = u.puzzles.map(p => p.id === puzzleId ? { ...p, title: title.trim(), data, draft: false } : p);
     return u;
   });
   if (SB && user.supaId) {
     sbUpdatePuzzle(puzzleId, user.supaId, { title: title.trim(), data });
   }
   notify("Puzzle updated!", "success");
+  onBack();
+}
+
+function saveDraft(user, updateUser, notify, type, title, data, onBack) {
+  const draftTitle = title.trim() || `Untitled ${GAME_TYPES[type]?.name || type}`;
+  const id = uid();
+  const puzzle = { id, type, title: draftTitle, creator: user.username, creatorName: user.displayName, data, createdAt: Date.now(), archived: false, sharedWith: [], draft: true };
+  updateUser(user.username, u => { u.puzzles = [...u.puzzles, puzzle]; return u; });
+  if (SB && user.supaId) {
+    sbCreatePuzzle(user.supaId, { type, title: draftTitle, data });
+  }
+  notify("Draft saved!", "success");
+  onBack();
+}
+
+function saveExistingDraft(user, updateUser, notify, puzzleId, type, title, data, onBack) {
+  const draftTitle = title.trim() || `Untitled ${GAME_TYPES[type]?.name || type}`;
+  updateUser(user.username, u => {
+    u.puzzles = u.puzzles.map(p => p.id === puzzleId ? { ...p, title: draftTitle, data } : p);
+    return u;
+  });
+  if (SB && user.supaId) {
+    sbUpdatePuzzle(puzzleId, user.supaId, { title: draftTitle, data });
+  }
+  notify("Draft updated!", "success");
   onBack();
 }
 
@@ -736,7 +766,14 @@ function CreateConnections({ user, db, onBack, notify, updateUser, editPuzzle })
         </div>
       ))}
       {!editPuzzle && <SharePicker friends={user.friends || []} shareWith={shareWith} setShareWith={setShareWith} />}
-      <button onClick={save} style={{ width: "100%", padding: "14px 0", borderRadius: 12, background: "#F9DF6D", color: "#0a0a0b", fontSize: 15, fontWeight: 700 }}>{editPuzzle ? "Save Changes" : "Create Puzzle"}</button>
+      <div style={{ display: "flex", gap: 10 }}>
+        <button onClick={() => {
+          const data = { groups: groups.map(g => ({ color: g.color, category: g.category.trim(), words: g.words.map(w => w.trim().toUpperCase()) })) };
+          if (editPuzzle?.draft) saveExistingDraft(user, updateUser, notify, editPuzzle.id, "connections", title, data, onBack);
+          else saveDraft(user, updateUser, notify, "connections", title, data, onBack);
+        }} style={{ flex: 1, padding: "14px 0", borderRadius: 12, background: "#1e1e1e", color: "#888", fontSize: 14, fontWeight: 600 }}>{editPuzzle?.draft ? "Update Draft" : "Save as Draft"}</button>
+        <button onClick={save} style={{ flex: 2, padding: "14px 0", borderRadius: 12, background: "#F9DF6D", color: "#0a0a0b", fontSize: 15, fontWeight: 700 }}>{editPuzzle ? (editPuzzle.draft ? "Publish" : "Save Changes") : "Create Puzzle"}</button>
+      </div>
     </div>
   );
 }
@@ -768,7 +805,15 @@ function CreateWordle({ user, db, onBack, notify, updateUser, editPuzzle }) {
       </div>
       <input placeholder="Hint (optional)..." value={hint} onChange={e => setHint(e.target.value)} style={{ ...inp, marginBottom: 20 }} />
       {!editPuzzle && <SharePicker friends={user.friends || []} shareWith={shareWith} setShareWith={setShareWith} />}
-      <button onClick={save} style={{ width: "100%", padding: "14px 0", borderRadius: 12, background: "#6AAA64", color: "#fff", fontSize: 15, fontWeight: 700 }}>{editPuzzle ? "Save Changes" : "Create Puzzle"}</button>
+      <div style={{ display: "flex", gap: 10 }}>
+        <button onClick={() => {
+          const w = word.trim().toUpperCase();
+          const data = { word: w || "", hint: hint.trim() };
+          if (editPuzzle?.draft) saveExistingDraft(user, updateUser, notify, editPuzzle.id, "wordle", title, data, onBack);
+          else saveDraft(user, updateUser, notify, "wordle", title, data, onBack);
+        }} style={{ flex: 1, padding: "14px 0", borderRadius: 12, background: "#1e1e1e", color: "#888", fontSize: 14, fontWeight: 600 }}>{editPuzzle?.draft ? "Update Draft" : "Save as Draft"}</button>
+        <button onClick={save} style={{ flex: 2, padding: "14px 0", borderRadius: 12, background: "#6AAA64", color: "#fff", fontSize: 15, fontWeight: 700 }}>{editPuzzle ? (editPuzzle.draft ? "Publish" : "Save Changes") : "Create Puzzle"}</button>
+      </div>
     </div>
   );
 }
@@ -1107,7 +1152,19 @@ function CreateStrands({ user, db, onBack, notify, updateUser, editPuzzle }) {
       )}
 
       {!editPuzzle && <SharePicker friends={user.friends || []} shareWith={shareWith} setShareWith={setShareWith} />}
-      <button onClick={save} disabled={!preview} style={{ width: "100%", padding: "14px 0", borderRadius: 12, background: preview ? "#97C1F7" : "#1e1e1e", color: preview ? "#0a0a0b" : "#555", fontSize: 15, fontWeight: 700 }}>{editPuzzle ? "Save Changes" : "Create Puzzle"}</button>
+      <div style={{ display: "flex", gap: 10 }}>
+        <button onClick={() => {
+          const spangram = spangramInput.trim().toUpperCase();
+          const words = wordsInput.split(",").map(w => w.trim().toUpperCase()).filter(Boolean);
+          const data = {
+            theme: theme.trim() || title.trim() || "", spangram, words,
+            grid: preview?.grid || [], rows: preview?.rows || 0, cols: preview?.cols || 0, placements: preview?.placements || {}
+          };
+          if (editPuzzle?.draft) saveExistingDraft(user, updateUser, notify, editPuzzle.id, "strands", title, data, onBack);
+          else saveDraft(user, updateUser, notify, "strands", title, data, onBack);
+        }} style={{ flex: 1, padding: "14px 0", borderRadius: 12, background: "#1e1e1e", color: "#888", fontSize: 14, fontWeight: 600 }}>{editPuzzle?.draft ? "Update Draft" : "Save as Draft"}</button>
+        <button onClick={save} disabled={!preview} style={{ flex: 2, padding: "14px 0", borderRadius: 12, background: preview ? "#97C1F7" : "#1e1e1e", color: preview ? "#0a0a0b" : "#555", fontSize: 15, fontWeight: 700 }}>{editPuzzle ? (editPuzzle.draft ? "Publish" : "Save Changes") : "Create Puzzle"}</button>
+      </div>
     </div>
   );
 }
@@ -1157,7 +1214,14 @@ function CreateThreads({ user, db, onBack, notify, updateUser, editPuzzle }) {
         </div>
       ))}
       {!editPuzzle && <SharePicker friends={user.friends || []} shareWith={shareWith} setShareWith={setShareWith} />}
-      <button onClick={save} style={{ width: "100%", padding: "14px 0", borderRadius: 12, background: "#C4A0E8", color: "#0a0a0b", fontSize: 15, fontWeight: 700, marginTop: 8 }}>{editPuzzle ? "Save Changes" : "Create Puzzle"}</button>
+      <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+        <button onClick={() => {
+          const data = { chain: chain.map(c => ({ word: c.word.trim().toUpperCase() || "", visible: c.visible, linkHint: c.linkHint.trim() })) };
+          if (editPuzzle?.draft) saveExistingDraft(user, updateUser, notify, editPuzzle.id, "threads", title, data, onBack);
+          else saveDraft(user, updateUser, notify, "threads", title, data, onBack);
+        }} style={{ flex: 1, padding: "14px 0", borderRadius: 12, background: "#1e1e1e", color: "#888", fontSize: 14, fontWeight: 600 }}>{editPuzzle?.draft ? "Update Draft" : "Save as Draft"}</button>
+        <button onClick={save} style={{ flex: 2, padding: "14px 0", borderRadius: 12, background: "#C4A0E8", color: "#0a0a0b", fontSize: 15, fontWeight: 700 }}>{editPuzzle ? (editPuzzle.draft ? "Publish" : "Save Changes") : "Create Puzzle"}</button>
+      </div>
     </div>
   );
 }
