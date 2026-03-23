@@ -33,3 +33,7 @@
 17. There should also be an option to edit the puzzle after creating too if you are the owner of the puzzle.
 
 18. Please ensure the leaderboard works properly. Any attempts at your own puzzles should not contribute, whether current or archived. Any attempts at friends' puzzles should contribute whether current or archived. This data should be stored across sessions, page refreshes, and logins.
+
+19. Update and simplify the share UI so that it is more obvious that a puzzle is either shared or private. When user selects to share with selected friends, the puzzle should be labelled Shared. When user clicks on this shared button they can see who it is shared with and can choose to make private again. When it is not shared with anyone, it is labelled private. When user clicks on private button, they have option to share with selected friends.
+
+20. When editing an already-made puzzle, any changes should be stored and overright the previous version. On strands, for example, the save changes button didn't work nor were my changes saved.

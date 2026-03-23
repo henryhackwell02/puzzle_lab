@@ -95,6 +95,7 @@ CREATE POLICY "Users can delete own puzzles" ON puzzles FOR DELETE USING (auth.u
 -- Shared: users can see their own shared, creators can share
 CREATE POLICY "Users can see puzzles shared with them" ON shared_puzzles FOR SELECT USING (auth.uid() = to_user_id OR auth.uid() = from_user_id);
 CREATE POLICY "Users can share puzzles" ON shared_puzzles FOR INSERT WITH CHECK (auth.uid() = from_user_id);
+CREATE POLICY "Users can unshare own puzzles" ON shared_puzzles FOR DELETE USING (auth.uid() = from_user_id);
 
 -- Friend requests: users can see own requests
 CREATE POLICY "Users can see own friend requests" ON friend_requests FOR SELECT USING (auth.uid() = to_user_id OR auth.uid() = from_user_id);
