@@ -19,3 +19,9 @@
 10. Strands often can't make the words fit on the board due to letter configuration. How can this be improved?
 
 11. The leaderboard needs to function properly. Counting the number of wins (complete puzzles), number of losses (incomplete puzzles), average lives lost in each game (e.g. guesses in wordle, hints in strands, lives in connections). Then rank you and your friends on the leaderboard. This should keep the figures even if the related puzzles are later archived.
+
+12. The leaderboard should only count puzzles created by another user that a user completes - they should not count their own.
+
+13. On strands, please ensure that after a user correctly guesses a word, a line connects all the lit up letters to make the pattern obvious (as in NYT version).
+
+14. Also please make using a hint optional on strands after users gets enough correct words (that are not the category ones). Currently, the hint is given automatically.

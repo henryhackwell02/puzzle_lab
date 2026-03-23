@@ -1338,6 +1338,7 @@ function PlayStrands({ user, puzzle, onBack, notify, updateUser }) {
   const [hints, setHints] = useState(0);
   const [nonTargetCount, setNonTargetCount] = useState(0);
   const [hintCells, setHintCells] = useState(new Set());
+  const [hintAvailable, setHintAvailable] = useState(0); // number of banked hints
   const [recentFoundWord, setRecentFoundWord] = useState(null);
   const [strandsDictLoading, setStrandsDictLoading] = useState(true);
   const gridRef = useRef(null);
@@ -1500,16 +1501,9 @@ function PlayStrands({ user, puzzle, onBack, notify, updateUser }) {
           const nc = nonTargetCount + 1;
           setNonTargetCount(nc);
           if (nc % 3 === 0) {
-            // Grant a hint: highlight cells of a random unfound word
-            const unfound = allTargets.filter(w => !found.includes(w));
-            if (unfound.length > 0) {
-              const hintWord = unfound[Math.floor(Math.random() * unfound.length)];
-              const hCells = new Set(placements[hintWord].map(([r, c]) => cellKey(r, c)));
-              setHintCells(hCells);
-              setHints(h => h + 1);
-              notify(`Hint! Look for the highlighted letters.`, "success");
-              setTimeout(() => setHintCells(new Set()), 3000);
-            }
+            // Bank a hint for the player to use when they choose
+            setHintAvailable(h => h + 1);
+            notify(`"${word}" — hint earned! Tap "Use Hint" when ready.`, "success");
           } else {
             notify(`"${word}" — valid word! ${3 - (nc % 3)} more until hint`, "info");
           }
@@ -1522,6 +1516,19 @@ function PlayStrands({ user, puzzle, onBack, notify, updateUser }) {
     setSel([]);
     setIsDragging(false);
   }, [sel, found, allTargets, grid, placements, nonTargetCount]);
+
+  const useHint = () => {
+    if (hintAvailable <= 0) return;
+    const unfound = allTargets.filter(w => !found.includes(w));
+    if (unfound.length === 0) return;
+    const hintWord = unfound[Math.floor(Math.random() * unfound.length)];
+    const hCells = new Set(placements[hintWord].map(([r, c]) => cellKey(r, c)));
+    setHintCells(hCells);
+    setHintAvailable(h => h - 1);
+    setHints(h => h + 1);
+    notify(`Hint! Look for the highlighted letters.`, "success");
+    setTimeout(() => setHintCells(new Set()), 3000);
+  };
 
   const handlePointerUp = useCallback(() => {
     if (isDragging) submitSelection();
@@ -1564,6 +1571,26 @@ function PlayStrands({ user, puzzle, onBack, notify, updateUser }) {
 
   const linePath = getLinePath();
 
+  // Compute line paths for all found words to draw connecting lines
+  const getFoundWordLines = () => {
+    const gridEl = gridRef.current;
+    if (!gridEl) return [];
+    const gridRect = gridEl.getBoundingClientRect();
+    return found.map(w => {
+      const cells = placements[w];
+      if (!cells || cells.length < 2) return null;
+      const points = cells.map(([r, c]) => {
+        const el = cellRefs.current[cellKey(r, c)];
+        if (!el) return null;
+        const cellRect = el.getBoundingClientRect();
+        return { x: cellRect.left - gridRect.left + cellRect.width / 2, y: cellRect.top - gridRect.top + cellRect.height / 2 };
+      }).filter(Boolean);
+      if (points.length < 2) return null;
+      return { word: w, points, isSpangram: w === spangram };
+    }).filter(Boolean);
+  };
+  const foundWordLines = getFoundWordLines();
+
   // Lock body scroll while this screen is mounted
   useEffect(() => {
     const orig = document.body.style.overflow;
@@ -1604,6 +1631,24 @@ function PlayStrands({ user, puzzle, onBack, notify, updateUser }) {
       {/* Grid — centered, cells sized to fill width with generous touch targets */}
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", width: "100%", touchAction: "none", padding: "0 12px" }}>
         <div ref={gridRef} style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "center", position: "relative", touchAction: "none", width: "100%", maxWidth: 420 }}>
+          {/* Connecting lines for found words */}
+          {foundWordLines.length > 0 && (
+            <svg style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 1 }}>
+              {foundWordLines.map(({ word, points, isSpangram }) => (
+                <polyline
+                  key={word}
+                  points={points.map(p => `${p.x},${p.y}`).join(" ")}
+                  fill="none"
+                  stroke={isSpangram ? "#F9DF6D" : "#97C1F7"}
+                  strokeWidth="3"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  opacity="0.45"
+                />
+              ))}
+            </svg>
+          )}
+          {/* Active selection line */}
           {linePath && linePath.length >= 2 && (
             <svg style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 2 }}>
               <polyline
@@ -1685,20 +1730,32 @@ function PlayStrands({ user, puzzle, onBack, notify, updateUser }) {
           </div>
         </div>
 
-        {!over && nonTargetCount > 0 && (
+        {!over && (nonTargetCount > 0 || hintAvailable > 0) && (
           <div style={{ textAlign: "center", marginTop: 4 }}>
-            <div style={{ display: "flex", justifyContent: "center", gap: 4, marginBottom: 2 }}>
-              {[0,1,2].map(i => (
-                <div key={i} style={{
-                  width: 8, height: 8, borderRadius: 4,
-                  background: i < (nonTargetCount % 3) ? "#97C1F7" : "#2a2a2a",
-                  transition: "background 0.3s",
-                }} />
-              ))}
-            </div>
-            <p style={{ fontSize: 10, color: "#444" }}>
-              {nonTargetCount % 3 === 0 ? "Hint available!" : `${3 - (nonTargetCount % 3)} valid word${3 - (nonTargetCount % 3) > 1 ? "s" : ""} until hint`}
-            </p>
+            {hintAvailable > 0 && (
+              <button onClick={useHint} style={{
+                padding: "8px 20px", borderRadius: 10, background: "#F9DF6D", color: "#0a0a0b",
+                fontSize: 12, fontWeight: 700, marginBottom: 6, border: "none",
+              }}>
+                Use Hint{hintAvailable > 1 ? ` (${hintAvailable})` : ""}
+              </button>
+            )}
+            {nonTargetCount > 0 && nonTargetCount % 3 !== 0 && (
+              <>
+                <div style={{ display: "flex", justifyContent: "center", gap: 4, marginBottom: 2 }}>
+                  {[0,1,2].map(i => (
+                    <div key={i} style={{
+                      width: 8, height: 8, borderRadius: 4,
+                      background: i < (nonTargetCount % 3) ? "#97C1F7" : "#2a2a2a",
+                      transition: "background 0.3s",
+                    }} />
+                  ))}
+                </div>
+                <p style={{ fontSize: 10, color: "#444" }}>
+                  {`${3 - (nonTargetCount % 3)} valid word${3 - (nonTargetCount % 3) > 1 ? "s" : ""} until hint`}
+                </p>
+              </>
+            )}
           </div>
         )}
 
@@ -1995,18 +2052,25 @@ function Leaderboard({ user, db, onBack, supaUser }) {
         const allIds = [supaUser.id, ...friendIds];
         const allResults = await getLeaderboardStats(allIds);
 
+        // Group results by user_id, excluding puzzles created by the same user
         const byUser = {};
         for (const r of allResults) {
+          const creatorId = r.puzzles?.creator_id;
+          if (creatorId && creatorId === r.user_id) continue; // skip own puzzles
           if (!byUser[r.user_id]) byUser[r.user_id] = [];
           byUser[r.user_id].push(r);
         }
 
         const entries = [];
-        // Self — merge Supabase + local results
+        // Self — merge Supabase + local results (local results lack creator info, include them)
         const selfResults = [...(byUser[supaUser.id] || [])];
         const localRes = user.results || {};
         for (const r of Object.values(localRes)) {
-          if (!selfResults.some(sr => sr.puzzle_id === r.puzzle_id)) selfResults.push(r);
+          if (!selfResults.some(sr => sr.puzzle_id === r.puzzle_id)) {
+            // Local results: skip if puzzle is user's own
+            const myPuzzleIds = new Set((user.puzzles || []).map(p => p.id));
+            if (!myPuzzleIds.has(r.puzzle_id)) selfResults.push(r);
+          }
         }
         const selfStats = computeStats(selfResults);
         entries.push({ key: supaUser.id, displayName: user.displayName, isSelf: true, ...selfStats });
@@ -2017,7 +2081,9 @@ function Leaderboard({ user, db, onBack, supaUser }) {
           const fDisplay = typeof f === "object" ? (f.displayName || f.username) : f;
           if (!fId) {
             const d = db[f]; if (!d) continue;
-            const stats = computeStats(Object.values(d.results || {}));
+            const ownIds = new Set((d.puzzles || []).map(p => p.id));
+            const filtered = Object.values(d.results || {}).filter(r => !ownIds.has(r.puzzle_id));
+            const stats = computeStats(filtered);
             entries.push({ key: f, displayName: d.displayName, isSelf: false, ...stats });
             continue;
           }
