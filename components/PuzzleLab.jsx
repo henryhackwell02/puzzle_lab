@@ -324,38 +324,43 @@ function Home({ user, db, nav, logout, notify, updateUser }) {
   const [puzzleTab, setPuzzleTab] = useState("mine");
   const [myFilter, setMyFilter] = useState("current");
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [shareModal, setShareModal] = useState(null); // puzzle id for share modal
 
   const allPuzzles = [...(user.puzzles || [])].sort((a, b) => b.createdAt - a.createdAt);
   const currentPuzzles = allPuzzles.filter(p => !p.archived);
   const archivedPuzzles = allPuzzles.filter(p => p.archived);
   const shownPuzzles = myFilter === "current" ? currentPuzzles : archivedPuzzles;
 
-  // Friends' puzzles — only non-archived (current) ones
-  const friendsPuzzles = (() => {
-    if (user.friendsPuzzles && user.friendsPuzzles.length > 0) {
-      return user.friendsPuzzles.filter(p => !p.archived);
-    }
-    const fps = [];
-    for (const f of (user.friends || [])) {
-      const fKey = typeof f === "object" ? f.username : f;
-      const fDisplay = typeof f === "object" ? (f.displayName || f.username) : f;
-      const fData = db[fKey];
-      if (fData) {
-        for (const p of (fData.puzzles || [])) {
-          if (!p.archived) fps.push({ ...p, creatorName: fData.displayName || fDisplay });
-        }
-      }
-    }
-    return fps.sort((a, b) => b.createdAt - a.createdAt);
-  })();
-
+  // Friends' puzzles — only explicitly shared ones
   const shared = (user.sharedWithMe || []).map(ref => {
     const c = db[ref.from]; if (!c) return null;
     const p = (c.puzzles || []).find(x => x.id === ref.puzzleId);
     return p ? { ...p, sharedBy: ref.from, sharedByName: c.displayName } : null;
-  }).filter(Boolean).sort((a, b) => b.createdAt - a.createdAt);
+  }).filter(Boolean);
   const supaShared = (user.sharedPuzzles || []);
-  const allShared = [...shared, ...supaShared.filter(sp => !shared.some(s => s.id === sp.id))];
+  const friendsPuzzles = [...shared, ...supaShared.filter(sp => !shared.some(s => s.id === sp.id))].sort((a, b) => b.createdAt - a.createdAt);
+
+  const sharePuzzleWithFriends = async (puzzleId, selectedFriends) => {
+    for (const f of selectedFriends) {
+      const friendId = typeof f === "object" ? f.id : null;
+      const friendEmail = typeof f === "object" ? f.username : f;
+      // Local mode
+      if (!SB && friendEmail) {
+        updateUser(friendEmail, u => { u.sharedWithMe = [...(u.sharedWithMe || []), { puzzleId, from: user.username, sharedAt: Date.now() }]; return u; });
+      }
+      // Supabase mode
+      if (SB && user.supaId) {
+        if (friendId) {
+          await sbSharePuzzle(puzzleId, user.supaId, friendId);
+        } else {
+          const friendObj = (user.friends || []).find(fr => (typeof fr === "object" ? fr.username : fr) === friendEmail);
+          if (friendObj?.id) await sbSharePuzzle(puzzleId, user.supaId, friendObj.id);
+        }
+      }
+    }
+    notify(`Shared with ${selectedFriends.length} friend${selectedFriends.length > 1 ? "s" : ""}!`, "success");
+    setShareModal(null);
+  };
 
   const del = (id) => {
     updateUser(user.username, u => { u.puzzles = u.puzzles.filter(p => p.id !== id); delete u.results[id]; return u; });
@@ -404,13 +409,6 @@ function Home({ user, db, nav, logout, notify, updateUser }) {
         ))}
       </div>
 
-      {/* Shared */}
-      {allShared.length > 0 && (
-        <Sec title="Shared With You" color="#6AAA64">
-          {allShared.map(p => <PCard key={p.id + (p.sharedBy || "")} p={p} sub={`from ${p.sharedByName || p.sharedBy || p.creatorName}`} res={user.results} onPlay={() => nav("play", null, p)} />)}
-        </Sec>
-      )}
-
       {/* Puzzle tabs: My Puzzles / Friends' Puzzles */}
       <div style={{ display: "flex", gap: 4, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
         <button onClick={() => setPuzzleTab("mine")} style={{
@@ -451,6 +449,7 @@ function Home({ user, db, nav, logout, notify, updateUser }) {
                 <PCard key={p.id} p={p} res={user.results} onPlay={() => nav("play", null, p)}
                   onDel={() => setConfirmDelete(p.id)}
                   onArchive={() => toggleArchive(p.id)}
+                  onShare={(user.friends || []).length > 0 ? () => setShareModal(p.id) : null}
                   archived={p.archived}
                   owner />
               ))}
@@ -459,8 +458,8 @@ function Home({ user, db, nav, logout, notify, updateUser }) {
 
       {puzzleTab === "friends" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 28 }}>
-          {friendsPuzzles.length === 0 ? <p style={{ color: "#555", fontSize: 13, padding: "16px 0" }}>No friends' puzzles yet — add friends to see their creations!</p>
-            : friendsPuzzles.map(p => <PCard key={p.id} p={p} sub={`by ${p.creatorName}`} res={user.results} onPlay={() => nav("play", null, p)} />)}
+          {friendsPuzzles.length === 0 ? <p style={{ color: "#555", fontSize: 13, padding: "16px 0" }}>No shared puzzles yet — friends can share puzzles with you!</p>
+            : friendsPuzzles.map(p => <PCard key={p.id + (p.sharedBy || "")} p={p} sub={`from ${p.sharedByName || p.sharedBy || p.creatorName}`} res={user.results} onPlay={() => nav("play", null, p)} />)}
         </div>
       )}
 
@@ -477,6 +476,9 @@ function Home({ user, db, nav, logout, notify, updateUser }) {
           </div>
         </div>
       )}
+
+      {/* Share modal */}
+      {shareModal && <ShareModal puzzleId={shareModal} friends={user.friends || []} onShare={sharePuzzleWithFriends} onClose={() => setShareModal(null)} />}
     </div>
   );
 }
@@ -488,7 +490,7 @@ const Sec = ({ title, color, children }) => (
   </div>
 );
 
-const PCard = ({ p, sub, res, onPlay, onDel, onArchive, archived, owner }) => {
+const PCard = ({ p, sub, res, onPlay, onDel, onArchive, onShare, archived, owner }) => {
   const r = res?.[p.id]; const g = GAME_TYPES[p.type];
   return (
     <div style={{ background: "#141415", borderRadius: 12, padding: "14px 16px", border: "1px solid #1e1e1e", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
@@ -504,8 +506,34 @@ const PCard = ({ p, sub, res, onPlay, onDel, onArchive, archived, owner }) => {
       </div>
       <div style={{ display: "flex", gap: 6, flexShrink: 0, alignItems: "center" }}>
         <button onClick={onPlay} style={{ padding: "7px 16px", borderRadius: 7, fontSize: 12, fontWeight: 600, background: r ? "#1e1e1e" : g?.color || "#F9DF6D", color: r ? (g?.color || "#F9DF6D") : "#0a0a0b" }}>{r ? "Replay" : "Play"}</button>
+        {owner && onShare && <button onClick={onShare} title="Share with friends" style={{ padding: "7px 10px", borderRadius: 7, fontSize: 12, background: "#1a1a1b", color: "#97C1F7" }}>↗</button>}
         {owner && onArchive && <button onClick={onArchive} title={archived ? "Unarchive" : "Archive"} style={{ padding: "7px 10px", borderRadius: 7, fontSize: 12, background: "#1a1a1b", color: archived ? "#6AAA64" : "#555" }}>{archived ? "↑" : "↓"}</button>}
         {owner && onDel && <button onClick={onDel} style={{ padding: "7px 10px", borderRadius: 7, fontSize: 12, background: "#1a1a1b", color: "#555" }}>✕</button>}
+      </div>
+    </div>
+  );
+};
+
+const ShareModal = ({ puzzleId, friends, onShare, onClose }) => {
+  const [selected, setSelected] = useState([]);
+  const getKey = (f) => typeof f === "object" ? (f.id || f.username) : f;
+  const getDisplay = (f) => typeof f === "object" ? (f.displayName || f.username) : f;
+  const toggle = (f) => setSelected(p => p.some(s => getKey(s) === getKey(f)) ? p.filter(s => getKey(s) !== getKey(f)) : [...p, f]);
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#141415", borderRadius: 16, padding: 28, maxWidth: 380, width: "100%", border: "1px solid #2a2a2a", animation: "fadeUp .2s ease" }}>
+        <p style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>Share puzzle</p>
+        <p style={{ fontSize: 12, color: "#666", marginBottom: 16 }}>Select friends to share with</p>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 20 }}>
+          {friends.map(f => {
+            const isSel = selected.some(s => getKey(s) === getKey(f));
+            return <button key={getKey(f)} onClick={() => toggle(f)} style={{ padding: "6px 14px", borderRadius: 16, fontSize: 12, fontWeight: 600, background: isSel ? "#97C1F7" : "#1e1e1e", color: isSel ? "#0a0a0b" : "#666" }}>{getDisplay(f)}</button>;
+          })}
+        </div>
+        <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+          <button onClick={onClose} style={{ padding: "10px 24px", borderRadius: 8, background: "#1e1e1e", color: "#888", fontSize: 13, fontWeight: 600 }}>Cancel</button>
+          <button onClick={() => selected.length > 0 && onShare(puzzleId, selected)} disabled={selected.length === 0} style={{ padding: "10px 24px", borderRadius: 8, background: selected.length > 0 ? "#97C1F7" : "#1e1e1e", color: selected.length > 0 ? "#0a0a0b" : "#444", fontSize: 13, fontWeight: 700, opacity: selected.length === 0 ? 0.5 : 1 }}>Share ({selected.length})</button>
+        </div>
       </div>
     </div>
   );
