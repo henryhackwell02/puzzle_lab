@@ -646,9 +646,20 @@ function CreateWordle({ user, db, onBack, notify, updateUser }) {
 // The spangram (allWords[0]) MUST span from one edge to the OPPOSITE edge.
 function generateStrandsGrid(allWords) {
   const totalLetters = allWords.reduce((s, w) => s + w.length, 0);
-  const cols = 6;
-  const rows = Math.ceil(totalLetters / cols);
-  if (rows * cols !== totalLetters) return null;
+
+  // Try column widths 5–8, pick the first that produces a valid grid
+  const validWidths = [6, 7, 5, 8].filter(c => totalLetters % c === 0 && Math.ceil(totalLetters / c) >= 3);
+  if (validWidths.length === 0) return null;
+
+  for (const tryCol of validWidths) {
+    const result = _generateStrandsGridWithCols(allWords, totalLetters, tryCol);
+    if (result) return result;
+  }
+  return null;
+}
+
+function _generateStrandsGridWithCols(allWords, totalLetters, cols) {
+  const rows = totalLetters / cols;
 
   const spangram = allWords[0];
   const otherWords = allWords.slice(1).sort((a, b) => b.length - a.length);
@@ -872,7 +883,8 @@ function CreateStrands({ user, db, onBack, notify, updateUser }) {
 
     const allWords = [spangram, ...words];
     const totalLetters = allWords.reduce((s, w) => s + w.length, 0);
-    if (totalLetters % 6 !== 0) return notify(`Total letters (${totalLetters}) must be divisible by 6 for the grid. Add/remove letters to reach ${Math.ceil(totalLetters / 6) * 6}.`, "error");
+    const hasValidWidth = [5, 6, 7, 8].some(c => totalLetters % c === 0 && Math.ceil(totalLetters / c) >= 3);
+    if (!hasValidWidth) return notify(`Total letters (${totalLetters}) must be divisible by 5, 6, 7, or 8 for the grid. Adjust word lengths.`, "error");
 
     setGenerating(true);
     setPreview(null);
@@ -905,22 +917,23 @@ function CreateStrands({ user, db, onBack, notify, updateUser }) {
     const ws = wordsInput.split(",").map(w => w.trim().toUpperCase()).filter(Boolean);
     return (sp ? sp.length : 0) + ws.reduce((s, w) => s + w.length, 0);
   })();
-  const nearestValid = Math.ceil(totalLetters / 6) * 6;
-  const isValid = totalLetters > 0 && totalLetters % 6 === 0;
+  const validWidths = [5, 6, 7, 8].filter(c => totalLetters % c === 0 && Math.ceil(totalLetters / c) >= 3);
+  const isValid = totalLetters > 0 && validWidths.length > 0;
+  const nearestValid = isValid ? totalLetters : [5, 6, 7, 8].map(c => Math.ceil(totalLetters / c) * c).sort((a, b) => a - b).find(n => n >= totalLetters) || Math.ceil(totalLetters / 6) * 6;
 
   return (
     <div style={{ maxWidth: 520, margin: "0 auto", padding: "24px 20px", animation: "fadeUp .4s ease" }}>
       <BackBtn onClick={onBack} />
       <Title color="#97C1F7">Create Strands</Title>
       <p style={{ color: "#666", fontSize: 12, marginBottom: 20, lineHeight: 1.6 }}>
-        Enter a theme, a spangram (the key theme word that captures the theme), and words to hide. Every cell in the grid will be used by exactly one word — no filler. Total letters must be divisible by 6 (grid is 6 columns wide).
+        Enter a theme, a spangram (the key theme word that captures the theme), and words to hide. Every cell in the grid will be used by exactly one word — no filler. Total letters must be divisible by 5, 6, 7, or 8 (the system picks the best grid width).
       </p>
       <input placeholder="Puzzle title..." value={title} onChange={e => setTitle(e.target.value)} style={{ ...inp, marginBottom: 12, fontSize: 16, fontWeight: 600 }} />
       <input placeholder="Theme hint (shown to player)..." value={theme} onChange={e => setTheme(e.target.value)} style={{ ...inp, marginBottom: 12 }} />
       <input placeholder="Spangram (key theme word)..." value={spangramInput} onChange={e => { setSpangramInput(e.target.value); setPreview(null); }} style={{ ...inp, marginBottom: 12, fontWeight: 600, textTransform: "uppercase" }} />
       <textarea placeholder="Words to hide (comma separated)..." value={wordsInput} onChange={e => { setWordsInput(e.target.value); setPreview(null); }} rows={3} style={{ ...inp, resize: "vertical", lineHeight: 1.5 }} />
       <p style={{ color: isValid ? "#6AAA64" : "#C9B458", fontSize: 11, marginTop: 6, marginBottom: 6 }}>
-        Letters: {totalLetters}{totalLetters > 0 && !isValid && ` → need ${nearestValid} (${nearestValid - totalLetters} more)`}{isValid && ` ✓ (${totalLetters / 6} rows × 6 cols)`}
+        Letters: {totalLetters}{totalLetters > 0 && !isValid && ` → need ${nearestValid} (${nearestValid - totalLetters} more)`}{isValid && ` ✓ (grid widths: ${validWidths.join(", ")} cols)`}
       </p>
       <p style={{ color: "#555", fontSize: 11, marginBottom: 16 }}>3–7 words, each 3+ letters. Words snake through adjacent cells (including diagonals).</p>
 
@@ -938,7 +951,7 @@ function CreateStrands({ user, db, onBack, notify, updateUser }) {
                 {Array.from({ length: preview.cols }, (_, c) => {
                   const isSpan = preview.placements[preview.spangram]?.some(([pr, pc]) => pr === r && pc === c);
                   return (
-                    <div key={c} style={{ width: 36, height: 36, borderRadius: 18, background: isSpan ? "#F9DF6D33" : "#1e1e1e", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 700, color: isSpan ? "#F9DF6D" : "#bbb" }}>
+                    <div key={c} style={{ width: Math.min(36, Math.floor(280 / preview.cols)), height: Math.min(36, Math.floor(280 / preview.cols)), borderRadius: "50%", background: isSpan ? "#F9DF6D33" : "#1e1e1e", display: "flex", alignItems: "center", justifyContent: "center", fontSize: Math.min(14, Math.floor(200 / preview.cols)), fontWeight: 700, color: isSpan ? "#F9DF6D" : "#bbb" }}>
                       {preview.grid[r][c]}
                     </div>
                   );
@@ -1616,7 +1629,7 @@ function PlayStrands({ user, puzzle, onBack, notify, updateUser }) {
                     onMouseDown={(e) => { e.preventDefault(); handlePointerDown(r, c); }}
                     onTouchStart={(e) => { e.preventDefault(); handlePointerDown(r, c); }}
                     style={{
-                      width: "calc((min(100vw, 420px) - 54px) / 6)",
+                      width: `calc((min(100vw, 420px) - ${(cols + 1) * 6}px) / ${cols})`,
                       aspectRatio: "1",
                       borderRadius: "50%",
                       fontSize: "clamp(16px, 4.5vw, 20px)", fontWeight: 800,
@@ -1962,65 +1975,63 @@ function Leaderboard({ user, db, onBack, supaUser }) {
   const [lbStats, setLbStats] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // Compute stats from a list of result objects
+  const computeStats = (results) => {
+    let wins = 0, losses = 0, totalMistakes = 0, played = 0;
+    for (const r of results) {
+      played++;
+      if (r.solved) { wins++; totalMistakes += (r.mistakes || 0); }
+      else { losses++; }
+    }
+    const avgLives = wins > 0 ? (totalMistakes / wins).toFixed(1) : "-";
+    const winRate = played > 0 ? Math.round(wins / played * 100) : 0;
+    return { played, wins, losses, avgLives, winRate };
+  };
+
   useEffect(() => {
     (async () => {
       if (SB && supaUser) {
-        // Supabase mode: fetch stats for self + friends
         const friendIds = (user.friends || []).map(f => typeof f === "object" ? f.id : null).filter(Boolean);
         const allIds = [supaUser.id, ...friendIds];
         const allResults = await getLeaderboardStats(allIds);
 
-        // Group results by user_id
         const byUser = {};
         for (const r of allResults) {
           if (!byUser[r.user_id]) byUser[r.user_id] = [];
           byUser[r.user_id].push(r);
         }
 
-        // Build stats for each player
         const entries = [];
-        // Self
-        const selfResults = byUser[supaUser.id] || [];
-        let played = 0, wins = 0, tm = 0, perf = 0;
-        for (const r of selfResults) { played++; if (r.solved) { wins++; tm += r.mistakes; if (r.mistakes === 0) perf++; } }
-        // Also count local results not yet synced
+        // Self — merge Supabase + local results
+        const selfResults = [...(byUser[supaUser.id] || [])];
         const localRes = user.results || {};
         for (const r of Object.values(localRes)) {
-          if (!selfResults.some(sr => sr.puzzle_id === r.puzzle_id)) {
-            played++; if (r.solved) { wins++; tm += r.mistakes; if (r.mistakes === 0) perf++; }
-          }
+          if (!selfResults.some(sr => sr.puzzle_id === r.puzzle_id)) selfResults.push(r);
         }
-        entries.push({ key: supaUser.id, displayName: user.displayName, isSelf: true, played, wins, perf, avgM: wins ? (tm / wins).toFixed(1) : "-", wr: played ? Math.round(wins / played * 100) : 0 });
+        const selfStats = computeStats(selfResults);
+        entries.push({ key: supaUser.id, displayName: user.displayName, isSelf: true, ...selfStats });
 
         // Friends
         for (const f of (user.friends || [])) {
           const fId = typeof f === "object" ? f.id : null;
           const fDisplay = typeof f === "object" ? (f.displayName || f.username) : f;
           if (!fId) {
-            // Local mode friend — try db lookup
             const d = db[f]; if (!d) continue;
-            const res = d.results || {};
-            let p2 = 0, w2 = 0, t2 = 0, pf2 = 0;
-            for (const r of Object.values(res)) { p2++; if (r.solved) { w2++; t2 += r.mistakes; if (r.mistakes === 0) pf2++; } }
-            entries.push({ key: f, displayName: d.displayName, isSelf: false, played: p2, wins: w2, perf: pf2, avgM: w2 ? (t2 / w2).toFixed(1) : "-", wr: p2 ? Math.round(w2 / p2 * 100) : 0 });
+            const stats = computeStats(Object.values(d.results || {}));
+            entries.push({ key: f, displayName: d.displayName, isSelf: false, ...stats });
             continue;
           }
-          const fResults = byUser[fId] || [];
-          let p2 = 0, w2 = 0, t2 = 0, pf2 = 0;
-          for (const r of fResults) { p2++; if (r.solved) { w2++; t2 += r.mistakes; if (r.mistakes === 0) pf2++; } }
-          entries.push({ key: fId, displayName: fDisplay, isSelf: false, played: p2, wins: w2, perf: pf2, avgM: w2 ? (t2 / w2).toFixed(1) : "-", wr: p2 ? Math.round(w2 / p2 * 100) : 0 });
+          const stats = computeStats(byUser[fId] || []);
+          entries.push({ key: fId, displayName: fDisplay, isSelf: false, ...stats });
         }
-        setLbStats(entries.sort((a, b) => b.wins !== a.wins ? b.wins - a.wins : b.perf - a.perf));
+        setLbStats(entries.sort((a, b) => b.wins !== a.wins ? b.wins - a.wins : a.avgLives !== b.avgLives ? (a.avgLives === "-" ? 1 : b.avgLives === "-" ? -1 : parseFloat(a.avgLives) - parseFloat(b.avgLives)) : b.winRate - a.winRate));
       } else {
-        // Local mode
         const players = [user.username, ...(user.friends || [])];
         const entries = players.map(p => {
           const d = db[p]; if (!d) return null;
-          const res = d.results || {};
-          let played = 0, wins = 0, tm = 0, perf = 0;
-          for (const r of Object.values(res)) { played++; if (r.solved) { wins++; tm += r.mistakes; if (r.mistakes === 0) perf++; } }
-          return { key: p, displayName: d.displayName, isSelf: p === user.username, played, wins, perf, avgM: wins ? (tm / wins).toFixed(1) : "-", wr: played ? Math.round(wins / played * 100) : 0 };
-        }).filter(Boolean).sort((a, b) => b.wins !== a.wins ? b.wins - a.wins : b.perf - a.perf);
+          const stats = computeStats(Object.values(d.results || {}));
+          return { key: p, displayName: d.displayName, isSelf: p === user.username, ...stats };
+        }).filter(Boolean).sort((a, b) => b.wins !== a.wins ? b.wins - a.wins : a.avgLives !== b.avgLives ? (a.avgLives === "-" ? 1 : b.avgLives === "-" ? -1 : parseFloat(a.avgLives) - parseFloat(b.avgLives)) : b.winRate - a.winRate);
         setLbStats(entries);
       }
       setLoading(false);
@@ -2031,15 +2042,23 @@ function Leaderboard({ user, db, onBack, supaUser }) {
     <div style={{ maxWidth: 520, margin: "0 auto", padding: "24px 20px", animation: "fadeUp .4s ease" }}>
       <BackBtn onClick={onBack} />
       <Title color="#C4A0E8">Leaderboard</Title>
+      <p style={{ color: "#555", fontSize: 11, marginBottom: 16, lineHeight: 1.5 }}>
+        Ranked by wins, then avg lives lost (guesses, hints, mistakes), then win rate.
+      </p>
       {loading ? <p style={{ color: "#555", fontSize: 13 }}>Loading...</p>
-        : lbStats.length === 0 ? <p style={{ color: "#555", fontSize: 13 }}>No data yet</p> : (
+        : lbStats.length === 0 ? <p style={{ color: "#555", fontSize: 13 }}>No data yet — play some puzzles!</p> : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {lbStats.map((d, i) => (
             <div key={d.key} style={{ background: "#141415", borderRadius: 12, padding: "14px 16px", border: i === 0 ? "1px solid #F9DF6D33" : "1px solid #1e1e1e", display: "flex", alignItems: "center", gap: 14 }}>
               <div style={{ width: 32, height: 32, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", background: i === 0 ? "#F9DF6D" : i === 1 ? "#999" : i === 2 ? "#cd7f32" : "#2a2a2a", color: i < 3 ? "#0a0a0b" : "#666", fontWeight: 800, fontSize: 14, flexShrink: 0 }}>{i + 1}</div>
               <div style={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
                 <p style={{ fontWeight: 700, fontSize: 14, color: d.isSelf ? "#F9DF6D" : "#e8e8e8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.displayName}{d.isSelf && <span style={{ fontSize: 10, color: "#666", marginLeft: 6 }}>(you)</span>}</p>
-                <p style={{ color: "#555", fontSize: 11, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.wins}W / {d.played}P · {d.wr}% · {d.perf} perfect · avg {d.avgM}m</p>
+                <div style={{ display: "flex", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
+                  <span style={{ color: "#6AAA64", fontSize: 11, fontWeight: 600 }}>{d.wins}W</span>
+                  <span style={{ color: "#E85D5D", fontSize: 11, fontWeight: 600 }}>{d.losses}L</span>
+                  <span style={{ color: "#555", fontSize: 11 }}>{d.winRate}%</span>
+                  <span style={{ color: "#97C1F7", fontSize: 11 }}>avg {d.avgLives} lives</span>
+                </div>
               </div>
             </div>
           ))}
