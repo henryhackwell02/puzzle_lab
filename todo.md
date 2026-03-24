@@ -38,4 +38,8 @@
 
 ~~20. When editing an already-made puzzle, any changes should be stored and overright the previous version. On strands, for example, the save changes button didn't work nor were my changes saved.~~
 
-21. There should be a save as draft option when making puzzles. If user selects, then puzzle is saved as private puzzle in normal place but it appears greyed out with draft labelling. User can then choose to edit and finish draft to make it a finished puzzle as normal.
+~~21. There should be a save as draft option when making puzzles. If user selects, then puzzle is saved as private puzzle in normal place but it appears greyed out with draft labelling. User can then choose to edit and finish draft to make it a finished puzzle as normal.~~
+
+~~22. Puzzles should stay in draft phase even on different sessions - after exiting page, refreshing, logging out etc. Only when a user continues and finishes the puzzle should it move to actual "finished" puzzle stage.~~
+
+~~23. Currently the error "Duplicate RECORD" is being thrown when updating puzzles. Make sure that any edits or updates to drafts overwrite previous creations in supabase (rather than creating duplicate). There should be only one master record which is replaced with each edit (in draft phase or after publishing). For simplicity, once a puzzle is published, it cannot be made a draft again, only deleted or edited and republished.~~
